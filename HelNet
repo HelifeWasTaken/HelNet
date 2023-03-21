@@ -1,0 +1,50 @@
+#pragma once
+
+#include <boost/asio.hpp>
+#include <queue>
+#include <mutex>
+#include <condition_variable>
+#include <memory>
+#include <utility>
+#include <chrono>
+#include <optional>
+
+namespace helnet
+{
+    class CountdownTimer
+    {
+    public:
+        using chrono_t = std::chrono;
+        using clock_type_t = chrono_t::system_clock;
+        using duration_type_t = chrono_t::milliseconds;
+        using duration_cast_t = chrono_t::duration_cast<duration_type_t>;
+
+    private:
+        mutable double m_time_left;
+        mutable std::chrono::time_point<ClockType> m_start_time;
+
+    public:
+        // Construct a timer with a given time left
+        CountdownTimer(double milliseconds)
+            : m_time_left(milliseconds)
+            , m_start_time(ClockType::now())
+        {
+        }
+
+        // Returns the time left in milliseconds
+        double time_left() const
+        {
+            auto now = clock_type_t::now();
+            auto elapsed = duration_cast_t(now - m_start_time).count();
+            m_time_left -= elapsed;
+            m_start_time = now;
+            return m_time_left;
+        }
+
+        // Returns true if the timer has expired
+        bool is_expired() const
+        {
+            return time_left() <= 0.0f;
+        }
+    };   
+}
