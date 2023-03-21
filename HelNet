@@ -46,5 +46,122 @@ namespace helnet
         {
             return time_left() <= 0.0f;
         }
-    };   
+    };
+
+    template<typename T, typename Algorithm, typename Container>
+    class sorted_list
+    {
+    public:
+        using size_type = std::size_t;
+        using value_type = T;
+        using reference = T&;
+        using pointer = T*;
+        using container = Container<T>;
+        using iterator = container::iterator;
+
+    private:
+        container m_data;
+
+    public:
+        sorted_vector() = default;
+
+        // Returns the size of the vector
+        size_type size() const
+        {
+            return m_data.size();
+        }
+
+        // Returns true if the vector is empty
+        bool empty() const
+        {
+            return m_data.empty();
+        }
+
+        // Returns an iterator to the beginning of the vector
+        iterator begin()
+        {
+            return m_data.begin();
+        }
+
+        // Returns an iterator to the end of the vector
+        iterator end()
+        {
+            return m_data.end();
+        }
+
+        // Returns a const iterator to the beginning of the vector
+        const iterator begin() const
+        {
+            return m_data.begin();
+        }
+
+        // Returns a const iterator to the end of the vector
+        const iterator end() const
+        {
+            return m_data.end();
+        }
+
+        // Returns a reference to the element at the given index
+        reference at(size_type index)
+        {
+            return m_data.at(index);
+        }
+
+        // Returns a const reference to the element at the given index
+        const reference at(size_type index) const
+        {
+            return m_data.at(index);
+        }
+
+        // Adds an element to the vector
+        void add(const value_type& value)
+        {
+            auto it = Algorithm(m_data.begin(), m_data.end(), value);
+            m_data.insert(it, value);
+        }
+
+        // Adds an element to the vector (with move semantics)
+        void add(value_type&& value)
+        {
+            auto it = Algorithm(m_data.begin(), m_data.end(), value);
+            m_data.insert(it, std::move(value));
+        }
+
+        // Removes an element from the vector
+        bool remove(const value_type& value)
+        {
+            auto it = Algorithm(m_data.begin(), m_data.end(), value);
+            if (it != m_data.end() && *it == value)
+            {
+                m_data.erase(it);
+                return true;
+            }
+            return false;
+        }
+
+        // Removes all elements that match the given value
+        void remove(const reference value)
+        {
+            auto it = Algorithm(m_data.begin(), m_data.end(), value);
+            while (it != m_data.end() && *it == value)
+            {
+                it = m_data.erase(it);
+            }
+        }
+
+        // Removes an element from the vector at the given index
+        void remove_at(size_type index)
+        {
+            m_data.erase(m_data.begin() + index);
+        }
+
+        // Removes all elements from the vector
+        void clear()
+        {
+            m_data.clear();
+        }
+    };
+
+    template<typename T>
+    using basic_sorted_vector = sorted_list<T, std::lower_bound, std::vector>;
 }
