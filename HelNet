@@ -1,6 +1,7 @@
 #pragma once
 
 #include <boost/asio.hpp>
+#include <boost/endian/conversion.hpp>
 #include <queue>
 #include <mutex>
 #include <condition_variable>
@@ -471,4 +472,381 @@ namespace helnet
 
     template<typename T>
     using basic_async_sparse_array = basic_async_sparse_array<T, std::vector>;
+
+    using byte = uint8_t;
+
+    class type_checker {
+    public:
+        template<typename T>
+        static constexpr bool is_arithmetic_type()
+        {
+            return std::is_arithmetic_v<T>;
+        }
+
+        template<typename T>
+        static constexpr bool is_arithmetic_type(const T&)
+        {
+            return is_arithmetic_type<T>();
+        }
+
+        template<typename T>
+        static constexpr bool is_enum_type()
+        {
+            return std::is_enum_v<T>;
+        }
+
+        template<typename T>
+        static constexpr bool is_enum_type(const T&)
+        {
+            return is_enum_type<T>();
+        }
+
+        template<typename T>
+        static constexpr bool is_string_type()
+        {
+            return std::is_same_v<std::remove_cvref_t<T>, std::string>;
+        }
+
+        template<typename T>
+        static constexpr bool is_string_type(const T&)
+        {
+            return is_string_type<T>();
+        }
+
+        template<typename T>
+        static constexpr bool is_vector_type()
+        {
+            return std::is_same_v<std::remove_cvref_t<T>, std::vector<typename T::value_type>>;
+        }
+
+        template<typename T>
+        static constexpr bool is_vector_type(const T&)
+        {
+            return is_vector_type<T>();
+        }
+
+        template<typename T>
+        static constexpr bool is_byte_type()
+        {
+            return std::is_same_v<std::remove_cvref_t<T>, byte>;
+        }
+
+        template<typename T>
+        static constexpr bool is_byte_type(const T&)
+        {
+            return is_byte_type<T>();
+        }
+
+        template<typename T>
+        static constexpr bool is_pointer_type()
+        {
+            return std::is_pointer_v<T>;
+        }
+
+        template<typename T>
+        static constexpr bool is_pointer_type(const T&)
+        {
+            return is_pointer_type<T>();
+        }
+    };
+
+    // A serializer that can be used to serialize data into a byte array
+    // It serializes data in little endian format.
+    // It can be used to serialize any type of data.
+    // When serializing a type, it must either be a byte array, a string, or arithmetical type (int, float, etc.)
+    // You cannot serialize any floating points because they are not normalized.
+
+    // When serializing a vector, it will be serialized as:
+    //      A uint64_t representing the size of the vector
+    //      The data of the vector
+    //      All the data is written with the write function so each element
+    //          will be normalized as little endian
+
+    // When serializing a string it will be serialized as:
+    //      A uint64_t representing the size of the string
+    //      The data of the string
+
+    // The byte array will be considered raw data and nothing will be done to
+    // indicate the size of the array. It will be written as is.
+    template<typename Container>
+    class Serializer
+    {
+    public:
+        using size_type = size_t;
+        using container = Container<byte>;
+        using slices = std::vector<container>;
+
+    private:
+        container m_data;
+
+        // Writes the data to the byte array
+        inline void _write_bytes(const byte* data, size_t size)
+        {
+            m_data.insert(m_data.end(), data, data + size);
+        }
+
+        // Writes a string to the byte array
+        inline void _write_string(const std::string& data)
+        {
+            uint64_t size = data.size();
+            write(size);
+            write_bytes(reinterpret_cast<const byte*>(data.data()), size);
+        }
+
+        // Writes a vector to the byte array
+        template<typename T>
+        inline void _write_vector(const std::vector<T>& data)
+        {
+            uint64_t size = data.size();
+            write(size);
+            std::for_each(data.begin(), data.end(), write<T>);
+        }
+
+        // Writes an arithmetical type to the byte array
+        template<typename T>
+        inline void _write_arithmetic(const T& data)
+        {
+            static_assert(sizeof(T) <= sizeof(byte) * 8, "T is too big to be serialized as a arithmetical type");
+            T copy_data = boost::endian::native_to_little(data);
+            write_bytes(reinterpret_cast<byte*>(&copy_data), sizeof(T));
+        }
+
+    public:
+        // Optimizes the memory usage of the byte array
+        void reserve(size_type size)
+        {
+            m_data.reserve(size);
+        }
+
+        // Writes data to the byte array using the template parameter
+        template<typename T>
+        inline void write(const T& data)
+        {
+            if constexpr (type_checker::is_arithmetic_type(data))
+            {
+                _write_arithmetic(data);
+            }
+            else if constexpr (type_checker::is_string_type(data))
+            {
+                _write_string(data);
+            }
+            else if constexpr (type_checker::is_vector_type(data))
+            {
+                _write_vector(data);
+            }
+            else if constexpr (type_checker::is_byte_type(data))
+            {
+                _write_bytes(&data, sizeof(data));
+            }
+            else
+            {
+                static_assert(false, "T is not a valid type to be serialized");
+            }
+        }
+
+        // write a sequence of raw bytes to the byte array
+        inline void write_bytes(const byte* data, size_type size)
+        {
+            _write_bytes(data, size);
+        }
+
+        // Returns the byte array
+        container &bytes()
+        {
+            return m_data;
+        }
+
+        // Returns the byte array (const)
+        const container &bytes() const
+        {
+            return m_data;
+        }
+
+        // Return an array of byte array that are splitted into slices of size n
+        slices as_slices_of(size_type n) const
+        {
+            assert(n > 0);
+            std::vector<container> slices;
+            size_type i = 0;
+            while (i < m_data.size())
+            {
+                slices.push_back(container(m_data.begin() + i, m_data.begin() + std::min(i + size, m_data.size())));
+                i += size;
+            }
+            return slices;
+        }
+
+        // Returns the size of the byte array
+        size_type size() const
+        {
+            return m_data.size();
+        }
+
+        // Clears the byte array
+        void clear()
+        {
+            m_data.clear();
+        }
+
+        // Merges two serializers into one
+        static Serializer merge(Serializer a, Serializer b)
+        {
+            Serializer s;
+            s.reserve(a.size() + b.size());
+            s.write(a.bytes());
+            s.write(b.bytes());
+            return s;
+        }
+
+        // Add a sequence of bytes every N bytes (can exclud/include the given sequence size)
+        // including the sequence size means that the sequence size will be added to the N
+        // It can be useful for adding headers to a byte array
+        static slices add_sequence_every_n_bytes_and_slice(
+            size_type n, Serializer sequence, 
+            bool include_sequence_size = true) const
+        {
+            const container &sbytes = sequence.bytes();
+            if (include_sequence_size)
+            {
+                if (n <= sbytes.size())
+                    throw std::invalid_argument("n must be greater than the size of the sequence");
+                n -= sbytes.size();
+            }
+
+            Serializer s;
+            s.reserve(m_data.size() + (m_data.size() / n) * sbytes.size());
+
+            for (size_type i = 0; i < m_data.size(); i += n)
+            {
+                s.write_bytes(m_data.data() + i, std::min(n, m_data.size() - i));
+                if (i + n < m_data.size())
+                    s.write_bytes(sbytes);
+            }
+            return s.as_slices_of(n + (include_sequence_size ? sbytes.size() : 0))
+        }
+
+        // Constructor
+        Serializer() = default;
+
+        // Destructor
+        ~Serializer() = default;
+    };
+
+    template<typename TSerializer, typename T>
+    static inline TSerializer &operator<<(TSerializer &serializer, const T &data)
+    {
+        serializer.write(data);
+        return serializer;
+    }
+
+    using basic_serializer = Serializer<std::vector>;
+
+    // A deserializer that can be used to deserialize data from a byte array
+    // It deserializes the data the same way it was serialized (c.f. Serializer)
+    template<typename Container>
+    class Deserializer
+    {
+    public:
+        using size_type = size_t;
+
+    private:
+        byte *m_data;
+        size_type m_size;
+        byte *m_ptr;
+        byte *m_endptr;
+
+        // Reads a sequence of raw bytes for an arithmetical type
+        T _read_arithmetic()
+        {
+            static_assert(sizeof(T) <= sizeof(byte) * 8, "T is too big to be deserialized");
+
+            if (m_ptr + sizeof(T) >= m_endptr)
+                throw std::runtime_error("Not enough data to deserialize arithmetical type");
+            T data;
+            std::memcpy(&data, m_ptr, sizeof(T));
+            m_ptr += sizeof(T);
+            boost::endian::little_to_native_inplace(data);
+            return data;
+        }
+
+        // Reads a string
+        std::string _read_string()
+        {
+            size_type size = read<size_type>();
+            if (m_ptr + size >= m_endptr)
+                throw std::runtime_error("Not enough data to deserialize string");
+            std::string str(reinterpret_cast<char *>(m_ptr), size);
+            m_ptr += size;
+            return str;
+        }
+
+        // Reads a vector of arithmetical types or strings
+        template<typename T>
+        std::vector<T> _read_vector()
+        {
+            size_type size = read<size_type>();
+            std::vector<T> vec;
+            vec.reserve(size);
+            for (size_type i = 0; i < size; ++i)
+                vec.push_back(read<T>());
+            return vec;
+        }
+
+        // Reads a sequence of raw bytes
+        std::vector<byte> _read_bytes(size_type size)
+        {
+            if (m_ptr + size >= m_endptr)
+                throw std::runtime_error("Not enough data to deserialize bytes");
+            std::vector<byte> vec(m_ptr, m_ptr + size);
+            m_ptr += size;
+            return vec;
+        }
+
+    public:
+        // Constructor
+        // data: A pointer to the byte array
+        // size: The size of the byte array
+        Deserializer(byte *data, size_type size)
+            : m_data(data), m_size(size), m_ptr(data), m_endptr(data + size)
+        {
+        }
+
+        // Reads data from the byte array
+        template<typename T>
+        T read()
+        {
+            if constexpr (type_checker::is_arithmetic_type<T>())
+            {
+                return _read_arithmetic<T>();
+            }
+            else if constexpr (type_checker::is_string_type<T>())
+            {
+                return _read_string();
+            }
+            else if constexpr (type_checker::is_vector_type<T>())
+            {
+                return _read_vector<typename T::value_type>();
+            }
+            else
+            {
+                static_assert(false, "T is not a valid type to be deserialized");
+            }
+        }
+
+        // Reads a sequence of raw bytes with a given size
+        std::vector<byte> read_bytes(size_type size)
+        {
+            return _read_bytes(size);
+        }
+    };
+
+    using basic_deserializer = Deserializer<std::vector>;
+
+    // Deserialize any T type deserializable by Deserializer::read<T>()
+    template<typename TDeserializer, typename T>
+    static inline TDeserializer &operator>>(TDeserializer &deserializer, T &data)
+    {
+        data = deserializer.read<T>();
+        return deserializer;
+    }
 }
