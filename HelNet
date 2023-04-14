@@ -9,9 +9,54 @@
 #include <utility>
 #include <chrono>
 #include <optional>
+#include <vector>
+#include <atomic>
+#include <algorithm>
 
 namespace helnet
 {
+    template<typename T>
+    using shared_ptr = std::shared_ptr<T>;
+
+    template<typename T>
+    using shared_from_this = std::enable_shared_from_this<T>;
+
+    template<typename T>
+    using atomic = std::atomic<T>;
+
+    template<typename T>
+    using shared_atomic = shared_ptr<atomic<T>>;
+
+    using mutex = std::mutex;
+
+    using condition_variable = std::condition_variable;
+
+    template<typename T>
+    using queue = std::queue<T>;
+
+    template<typename T>
+    using list = std::list<T>;
+
+    using thread = std::thread;
+    using this_thread = std::this_thread;
+
+    template<typename M>
+    using unique_lock = std::unique_lock<M>;
+
+    template<typename T>
+    using vector = std::vector<T>;
+
+    template<typename O>
+    using optional = std::optional<O>;
+
+    template<typename F, typename S>
+    using pair = std::pair<F, S>;
+
+    using string = std::string;
+
+    template<typename F>
+    using function = std::function<F>;
+
     class CountdownTimer
     {
     public:
@@ -53,7 +98,7 @@ namespace helnet
     class sorted_list
     {
     public:
-        using size_type = std::size_t;
+        using size_type = size_t;
         using value_type = T;
         using reference = T&;
         using pointer = T*;
@@ -164,14 +209,14 @@ namespace helnet
     };
 
     template<typename T>
-    using basic_sorted_vector = sorted_list<T, std::lower_bound, std::vector>;
+    using basic_sorted_vector = sorted_list<T, std::lower_bound, vector>;
 
-    template<typename T, typename Container = std::vector>
+    template<typename T, typename Container = vector>
     class async_sparse_array
     {
     public:
-        using size_type = std::size_t;
-        using value_type = std::optional<T>;
+        using size_type = size_t;
+        using value_type = optional<T>;
         using reference = value_type&;
         using pointer = value_type*;
         using container = Container<value_type>;
@@ -183,7 +228,7 @@ namespace helnet
 
     private:
         Container m_data;
-        std::mutex m_mutex;
+        mutex m_mutex;
         size_type m_max_size;
 
         basic_sorted_vector<size_type> m_free_indices;
@@ -269,7 +314,7 @@ namespace helnet
         // inserts an element into the array
         size_type insert(const value_type& value)
         {
-            std::unique_lock<std::mutex> lock(m_mutex);
+            unique_lock<mutex> lock(m_mutex);
             size_type index = _insert();
             if (index == invalid_index)
             {
@@ -282,7 +327,7 @@ namespace helnet
         // inserts an element into the array (with move semantics)
         size_type insert(value_type&& value)
         {
-            std::unique_lock<std::mutex> lock(m_mutex);
+            unique_lock<mutex> lock(m_mutex);
             size_type index = _insert();
             if (index == invalid_index)
             {
@@ -295,7 +340,7 @@ namespace helnet
         // remove an element from the array
         bool remove(size_type index)
         {
-            std::unique_lock<std::mutex> lock(m_mutex);
+            unique_lock<mutex> lock(m_mutex);
             if (index >= m_data.size())
             {
                 return false;
@@ -308,7 +353,7 @@ namespace helnet
         // remove all elements from the array
         void clear()
         {
-            std::unique_lock<std::mutex> lock(m_mutex);
+            unique_lock<mutex> lock(m_mutex);
             m_data.clear();
             m_free_indices.clear();
             m_biggest_used_index = invalid_index;
@@ -317,10 +362,10 @@ namespace helnet
         // Returns a copy of the element at the given index
         value_type copy_get(size_type index)
         {
-            std::unique_lock<std::mutex> lock(m_mutex);
+            unique_lock<mutex> lock(m_mutex);
             if (index >= m_data.size())
             {
-                return std::nullopt;
+                return nullptr;
             }
             return m_data[index];
         }
@@ -328,23 +373,22 @@ namespace helnet
         // Returns a copy of the element at the given index (const)
         const value_type copy_get(size_type index) const
         {
-            std::unique_lock<std::mutex> lock(m_mutex);
+            unique_lock<mutex> lock(m_mutex);
             if (index >= m_data.size())
             {
-                return std::nullopt;
+                return nullptr;
             }
             return m_data[index];
         }
 
         // Returns a reference to the element at the given index
-        // Throws std::out_of_range if the index is out of range
         // This function is not thread safe as it returns a reference to the element in the array
         // If the element is removed from the array while the reference is still being used, the behavior is undefined
         // Use copy_get instead if you need thread safety
         // (copy_get will always be slower than ref_get but should be good when T is a small type or a shared_ptr)
         reference ref_get(size_type index)
         {
-            std::unique_lock<std::mutex> lock(m_mutex);
+            unique_lock<mutex> lock(m_mutex);
             if (index >= m_data.size())
             {
                 throw std::out_of_range("index out of range");
@@ -356,7 +400,7 @@ namespace helnet
         // (see ref_get for more info)
         const reference ref_get(size_type index) const
         {
-            std::unique_lock<std::mutex> lock(m_mutex);
+            unique_lock<mutex> lock(m_mutex);
             if (index >= m_data.size())
             {
                 throw std::out_of_range("index out of range");
@@ -371,7 +415,7 @@ namespace helnet
         // but the function may be used for optimization purposes
         bool contains(size_type index) const
         {
-            std::unique_lock<std::mutex> lock(m_mutex);
+            unique_lock<mutex> lock(m_mutex);
             if (index >= m_data.size())
             {
                 return false;
@@ -386,7 +430,7 @@ namespace helnet
             size_type index;
 
         public:
-            using value_type = std::pair<size_type, value_type&>;
+            using value_type = pair<size_type, value_type&>;
 
             Iterator(async_sparse_array<T, Container>& container, size_type index)
                 : container(container)
@@ -451,6 +495,261 @@ namespace helnet
             }
         };
 
+        // Async queue
+        template<typename T>
+        class async_queue
+        {
+        private:
+            mutex m_mutex;
+            condition_variable m_condition;
+            queue<T> m_queue;
+
+        public:
+            async_queue() = default;
+            ~async_queue() = default;
+
+            bool empty() const
+            {
+                unique_lock<mutex> lock(m_mutex);
+                return m_queue.empty();
+            }
+
+            void push(const T& value)
+            {
+                {
+                    unique_lock<mutex> lock(m_mutex);
+                    m_queue.push(value);
+                }
+                m_condition.notify_one();
+            }
+
+            void push(T&& value)
+            {
+                {
+                    unique_lock<mutex> lock(m_mutex);
+                    m_queue.push(std::move(value));
+                }
+                m_condition.notify_one();
+            }
+
+            template<typename... Args>
+            void emplace(Args&&... args)
+            {
+                {
+                    unique_lock<mutex> lock(m_mutex);
+                    m_queue.emplace(std::forward<Args>(args)...);
+                }
+                m_condition.notify_one();
+            }
+
+            T pop()
+            {
+                unique_lock<mutex> lock(m_mutex);
+                m_condition.wait(lock, [this] { return !m_queue.empty(); });
+                T value = move(m_queue.front());
+                m_queue.pop();
+                return value;
+            }
+
+            bool poll(T& value)
+            {
+                unique_lock<mutex> lock(m_mutex);
+                if (m_queue.empty())
+                {
+                    return false;
+                }
+                value = std::move(m_queue.front());
+                m_queue.pop();
+                return true;
+            }
+
+            void clear()
+            {
+                unique_lock<mutex> lock(m_mutex);
+                while (!m_queue.empty())
+                {
+                    m_queue.pop();
+                }
+            }
+
+            size_t size() const
+            {
+                unique_lock<mutex> lock(m_mutex);
+                return m_queue.size();
+            }
+        };
+
+        template<typename T>
+        class async_list
+        {
+        private:
+            mutex m_mutex;
+            list<T> m_list;
+
+        public:
+            void push_back(const T& value)
+            {
+                unique_lock<mutex> lock(m_mutex);
+                m_list.push_back(value);
+            }
+
+            void push_back(T&& value)
+            {
+                unique_lock<mutex> lock(m_mutex);
+                m_list.push_back(std::move(value));
+            }
+
+            template<typename... Args>
+            void emplace_back(Args&&... args)
+            {
+                unique_lock<mutex> lock(m_mutex);
+                m_list.emplace_back(std::forward<Args>(args)...);
+            }
+
+            void clear()
+            {
+                unique_lock<mutex> lock(m_mutex);
+                m_list.clear();
+            }
+
+            bool empty() const
+            {
+                unique_lock<mutex> lock(m_mutex);
+                return m_list.empty();
+            }
+
+            void remove_if(function<bool(const T&)> predicate,
+                function<void(T&)> on_remove = [](T&) {})
+            {
+                unique_lock<mutex> lock(m_mutex);
+                for (auto it = m_list.begin(); it != m_list.end();)
+                {
+                    if (predicate(*it))
+                    {
+                        on_remove(*it);
+                        it = m_list.erase(it);
+                    }
+                    else
+                    {
+                        ++it;
+                    }
+                }
+            }
+        };
+
+        // Thread queue
+        class thread_list
+        {
+        private:
+            async_list<thread> m_threads;
+            async_queue<thread::id> m_ids;
+
+        public:
+            thread_queue() = default;
+
+            template<typename F, typename... Args>
+            void push(F&& f, Args&&... args)
+            {
+                m_threads.emplace_back([this](F&& f, Args&&... args) {
+                    thread::id id = this_thread::get_id();
+                    f(std::forward<Args>(args)...);
+                    m_ids.push(id);
+                }, std::forward<F>(f), std::forward<Args>(args)...);
+            }
+
+            void join()
+            {
+                m_threads.remove_if([](const thread& t) { return t.joinable(); },
+                    [](thread& t) { t.join(); });
+                m_threads.clear();
+                m_ids.clear();
+            }
+
+            void update()
+            {
+                thread::id id;
+                while (m_ids.poll(id))
+                {
+                    m_threads.remove_if([id](const thread& t) { return t.get_id() == id; },
+                        [](thread& t) { t.join(); });
+                }
+            }
+
+            void clear()
+            {
+                join();
+                m_threads.clear();
+                m_ids.clear();
+            }
+
+            bool empty() const
+            {
+                return m_threads.empty();
+            }
+
+            ~thread_queue()
+            {
+                clear();
+            }
+        };
+
+        class async_thread_pool
+        {
+        private:
+            thread_list m_threads;
+            atomic<bool> m_stop;
+            atomic<bool> m_has_event;
+            thread m_thread;
+            condition_variable m_condition;
+            mutex m_mutex;
+
+        public:
+            async_thread_pool()
+            {
+                m_stop = false;
+                m_has_event = false;
+                m_thread = thread([this]() {
+                    while (!m_stop) {
+                        m_threads.update();
+                        unique_lock<mutex> lock(m_mutex);
+                        m_condition.wait(lock, [this] { return m_stop || m_has_event; });
+                        m_has_event = false;
+                    }
+                });
+            }
+
+            template<typename F, typename... Args>
+            void push(F&& f, Args&&... args)
+            {
+                m_threads.push(
+                    [this](F&& f, Args&&... args) {
+                        f(std::forward<Args>(args)...);
+                        m_has_event = true;
+                        m_condition.notify_one();
+                    },
+                    std::forward<F>(f),
+                    std::forward<Args>(args)...
+                );
+            }
+
+            void clear()
+            {
+                m_threads.clear();
+            }
+
+            bool empty() const
+            {
+                return m_threads.empty();
+            }
+
+            ~async_thread_pool()
+            {
+                m_stop = true;
+                m_condition.notify_one();
+                m_thread.join();
+            }
+        };
+
         // Returns an iterator to the first element in the array
         // This iterator is not thread safe as it takes a reference to the array
         // If the array is modified while the iterator is being used, the behavior is undefined
@@ -471,7 +770,7 @@ namespace helnet
     };
 
     template<typename T>
-    using basic_async_sparse_array = basic_async_sparse_array<T, std::vector>;
+    using basic_async_sparse_array = basic_async_sparse_array<T, vector>;
 
     using byte = uint8_t;
 
@@ -574,7 +873,7 @@ namespace helnet
     public:
         using size_type = size_t;
         using container = Container<byte>;
-        using slices = std::vector<container>;
+        using slices = vector<container>;
 
     private:
         container m_data;
@@ -586,7 +885,7 @@ namespace helnet
         }
 
         // Writes a string to the byte array
-        inline void _write_string(const std::string& data)
+        inline void _write_string(const string& data)
         {
             uint64_t size = data.size();
             write(size);
@@ -595,7 +894,7 @@ namespace helnet
 
         // Writes a vector to the byte array
         template<typename T>
-        inline void _write_vector(const std::vector<T>& data)
+        inline void _write_vector(const vector<T>& data)
         {
             uint64_t size = data.size();
             write(size);
@@ -666,7 +965,7 @@ namespace helnet
         slices as_slices_of(size_type n) const
         {
             assert(n > 0);
-            std::vector<container> slices;
+            vector<container> slices;
             size_type i = 0;
             while (i < m_data.size())
             {
@@ -733,13 +1032,13 @@ namespace helnet
     };
 
     template<typename TSerializer, typename T>
-    static inline TSerializer &operator<<(TSerializer &serializer, const T &data)
+    static inline Serializer<TSerializer> &operator<<(Serializer<TSerializer> &serializer, const T &data)
     {
         serializer.write(data);
         return serializer;
     }
 
-    using basic_serializer = Serializer<std::vector>;
+    using basic_serializer = Serializer<vector>;
 
     // A deserializer that can be used to deserialize data from a byte array
     // It deserializes the data the same way it was serialized (c.f. Serializer)
@@ -770,22 +1069,22 @@ namespace helnet
         }
 
         // Reads a string
-        std::string _read_string()
+        string _read_string()
         {
             size_type size = read<size_type>();
             if (m_ptr + size >= m_endptr)
                 throw std::runtime_error("Not enough data to deserialize string");
-            std::string str(reinterpret_cast<char *>(m_ptr), size);
+            string str(reinterpret_cast<char *>(m_ptr), size);
             m_ptr += size;
             return str;
         }
 
         // Reads a vector of arithmetical types or strings
         template<typename T>
-        std::vector<T> _read_vector()
+        vector<T> _read_vector()
         {
             size_type size = read<size_type>();
-            std::vector<T> vec;
+            vector<T> vec;
             vec.reserve(size);
             for (size_type i = 0; i < size; ++i)
                 vec.push_back(read<T>());
@@ -793,11 +1092,11 @@ namespace helnet
         }
 
         // Reads a sequence of raw bytes
-        std::vector<byte> _read_bytes(size_type size)
+        vector<byte> _read_bytes(size_type size)
         {
             if (m_ptr + size >= m_endptr)
                 throw std::runtime_error("Not enough data to deserialize bytes");
-            std::vector<byte> vec(m_ptr, m_ptr + size);
+            vector<byte> vec(m_ptr, m_ptr + size);
             m_ptr += size;
             return vec;
         }
@@ -834,19 +1133,383 @@ namespace helnet
         }
 
         // Reads a sequence of raw bytes with a given size
-        std::vector<byte> read_bytes(size_type size)
+        vector<byte> read_bytes(size_type size)
         {
             return _read_bytes(size);
         }
     };
 
-    using basic_deserializer = Deserializer<std::vector>;
+    using basic_deserializer = Deserializer<vector>;
 
     // Deserialize any T type deserializable by Deserializer::read<T>()
     template<typename TDeserializer, typename T>
-    static inline TDeserializer &operator>>(TDeserializer &deserializer, T &data)
+    static inline Deserializer<TDeserializer> &operator>>(Deserializer<TDeserializer> &deserializer, T &data)
     {
         data = deserializer.read<T>();
         return deserializer;
     }
+
+    class base_client;
+
+    using buffer_t = shared_ptr<vector<byte>>;
+
+    static inline buffer_t make_buffer(size_t size)
+    {
+        return make_shared<vector<byte>>(size);
+    }
+
+    static inline buffer_t make_buffer(const byte *data, size_t size)
+    {
+        return make_shared<vector<byte>>(data, data + size);
+    }
+
+    static inline buffer_t make_buffer(const vector<byte> &data)
+    {
+        return make_shared<vector<byte>>(data);
+    }
+
+    static inline buffer_t make_buffer(vector<byte> &&data)
+    {
+        return make_shared<vector<byte>>(std::move(data));
+    }
+
+    using shared_base_client = shared<base_client>;
+
+    using bsystem = boost::system;
+
+    using basio = boost::asio;
+
+    using client_on_connect_callback = void (*)(shared_base_client);
+    using client_on_connect_error_callback = void (*)(shared_base_client, const bsystem::error_code&);
+    using client_already_connected_callback = void (*)(shared_base_client);
+
+    using client_on_disconnect_callback = void (*)(shared_base_client);
+    using client_already_disconnected_callback = void (*)(shared_base_client);
+
+    using client_on_receive_callback = void (*)(shared_base_client, const buffer_t, const bsystem::error_code&, size_t);
+    using client_on_receive_error_callback = void (*)(shared_base_client, const bsystem::error_code&);
+
+    using client_on_send_callback = bool (*)(shared_base_client, buffer_t&);
+    using client_on_send_error_callback = void (*)(shared_base_client, const bsystem::error_code&);
+    using client_on_send_success = void (*)(shared_base_client, const buffer_t, const bsystem::error_code&, size_t);
+
+    using client_on_specific_error_callback = void (*)(shared_base_client, const string &);
+
+    // base client class
+    class base_client : public shared_from_this<base_client>
+    {
+    protected:
+        // callbacks
+        client_on_connect_callback m_on_connect = nullptr;
+        client_on_connect_error_callback m_on_connect_error = nullptr;
+        client_already_connected_callback m_already_connected = nullptr;
+
+        client_on_disconnect_callback m_on_disconnect = nullptr;
+        client_already_connected_callback m_already_disconnected = nullptr;
+
+        client_on_receive_callback m_on_receive = nullptr;
+        client_on_receive_error_callback m_on_receive_error = nullptr;
+
+        client_on_send_callback m_on_send = nullptr;
+        client_on_send_error_callback m_on_send_error = nullptr;
+        client_on_send_success m_on_send_success = nullptr;
+
+        client_on_specific_error_callback m_on_specific_error = nullptr;
+        client_on_common_error_callback m_on_common_error = nullptr;
+
+        // callback thread pool
+        async_thread_pool m_callback_thread_pool;
+
+        // connection status
+        atomic<bool> m_connected;
+
+    public:
+        void set_on_connect(client_on_connect_callback callback)
+        {
+            m_on_connect = callback;
+        }
+
+        void set_on_connect_error(client_on_connect_error_callback callback)
+        {
+            m_on_connect_error = callback;
+        }
+
+        void set_already_connected(client_already_connected_callback callback)
+        {
+            m_already_connected = callback;
+        }
+
+        void set_on_disconnect(client_on_disconnect_callback callback)
+        {
+            m_on_disconnect = callback;
+        }
+
+        void set_already_disconnected(client_already_connected_callback callback)
+        {
+            m_already_disconnected = callback;
+        }
+
+        void set_on_receive(client_on_receive_callback callback)
+        {
+            m_on_receive = callback;
+        }
+
+        void set_on_receive_error(client_on_receive_error_callback callback)
+        {
+            m_on_receive_error = callback;
+        }
+
+        void set_on_send(client_on_send_callback callback)
+        {
+            m_on_send = callback;
+        }
+
+        void set_on_send_error(client_on_send_error_callback callback)
+        {
+            m_on_send_error = callback;
+        }
+
+        void set_on_send_success(client_on_send_success callback)
+        {
+            m_on_send_success = callback;
+        }
+
+        void set_on_specific_error(client_on_specific_error_callback callback)
+        {
+            m_on_specific_error = callback;
+        }
+
+        void set_on_common_error(client_on_common_error_callback callback)
+        {
+            m_on_common_error = callback;
+        }
+
+        static constexpr size_t default_receive_buffer_size = 1024;
+
+    private:
+        buffer_t m_receive_buffer;
+
+    public:
+        base_client()
+        {
+            m_receive_buffer = make_buffer(default_receive_buffer_size);
+            m_connected = false;
+        }
+
+        virtual ~base_client() = default;
+
+        bool connected() const
+        {
+            return m_connected;
+        }
+
+        recv_buffer_t &receive_buffer()
+        {
+            return m_receive_buffer;
+        }
+
+        const recv_buffer_t &receive_buffer() const
+        {
+            return m_receive_buffer;
+        }
+
+        recv_buffer_t &receive_buffer(size_t size)
+        {
+            m_receive_buffer->resize(size);
+            return m_receive_buffer;
+        }
+
+        shared_client as_shared()
+        {
+            return shared_from_this();
+        }
+
+        bool callbacks_are_valid()
+        {
+            return m_on_connect != nullptr
+                && m_on_connect_error != nullptr
+                && m_already_connected != nullptr
+                && m_on_disconnect != nullptr
+                && m_already_disconnected != nullptr
+                && m_on_receive != nullptr
+                && m_on_receive_error != nullptr
+                && m_on_send != nullptr
+                && m_on_send_error != nullptr
+                && m_on_send_success != nullptr
+                && m_on_specific_error != nullptr
+                && m_on_common_error != nullptr;
+        }
+
+        virtual bool connect(const string &ip, const uint16_t &port) = 0;
+        virtual bool disconnect() = 0;
+        virtual bool send(buffer_t &buffer) = 0;
+    };
+
+    // TCP client class
+    class base_tcp_client : public base_client
+    {
+    private:
+        struct base_tcp_client_connection_data {
+            boost::asio::ip::tcp::resolver m_resolver;
+            boost::asio::ip::tcp::resolver::query m_query;
+            boost::asio::ip::tcp::resolver::iterator m_endpoint_iterator;
+            boost::asio::ip::tcp::socket m_socket;
+            boost::asio::io_service m_io_service;
+            thread m_io_service_thread;
+
+            base_tcp_client_connection_data(const string &ip, const uint16_t& port)
+                : m_resolver(m_io_service)
+                , m_query(ip, "daytime")
+                , m_endpoint_iterator(m_resolver.resolve(m_query))
+                , m_socket(m_io_service)
+            {
+            }
+        };
+
+        shared_ptr<base_tcp_client_connection_data> m_connection_data;
+
+        void start_reading()
+        {
+            if (!m_connected) {
+                return;
+            }
+
+            auto client = this->as_shared();
+
+            m_connection_data->m_socket.async_receive(
+                boost::asio::buffer(*m_receive_buffer),
+                [this, client, recv_buffer = m_receive_buffer]
+                (const bsystem::error_code& ec, size_t bytes_transferred) {
+                    if (ec) {
+                        this->m_callback_thread_pool.push(
+                            [this, client, ec]()
+                            { this->m_on_receive_error(client, ec); };
+                        );
+                        return;
+                    }
+
+                    auto buffer_cpy = make_buffer(*recv_buffer);
+
+                    m_callback_thread_pool.push(
+                        [this, client, buffer_cpy, ec, bytes_transferred]()
+                        { this->m_on_receive(client, buffer_cpy, ec, bytes_transferred); };
+                    );
+                }
+            );
+        }
+
+    public:
+        tcp_client() = default;
+
+        virtual ~tcp_client() = default;
+
+        virtual bool connect(const string &ip, const uint16_t &port) override
+        {
+            assert(callbacks_are_valid());
+
+            auto client = this->as_shared();
+
+            const auto already_connected_callback =
+                [this, client]()
+                { this->m_already_connected(client); };
+
+            const auto on_connect_error_callback =
+                [this, client](const bsystem::error_code& ec)
+                { this->m_on_connect_error(client, ec); };
+
+            const auto on_connect_callback =
+                [this, client]() {
+                    this->m_on_connect(client);
+                    this->start_reading();
+                };
+
+            const auto io_service_launch = [this]() {
+                this->m_connection_data->m_io_service.run();
+            };
+
+            if (m_connected) {
+                m_callback_thread_pool.push(already_connected_callback);
+                return false;
+            }
+
+            m_connection_data = std::make_shared<base_tcp_client_connection_data>(ip, port);
+
+            boost::system::error_code error;
+            boost::asio::ip::tcp::resolver::iterator end;
+
+            while (error && m_connection_data->m_endpoint_iterator != end) {
+                m_connection_data->m_socket.close();
+                m_connection_data->m_socket.connect(*m_connection_data->m_endpoint_iterator++, error);
+            }
+
+            if (error) {
+                m_callback_thread_pool.push(on_connect_error_callback, error);
+                return false;
+            }
+
+            m_connected = true;
+            m_connection_data->m_io_service_thread = thread(io_service_launch);
+            m_callback_thread_pool.push(on_connect_callback);
+            return true;
+        }
+
+        virtual bool disconnect() override
+        {
+            auto client = this->as_shared();
+
+            const auto disconnect_callback =
+                [this, client]() { this->m_on_disconnect(client); };
+            const auto already_disconnected_callback =
+                [this, client]() { this->m_already_disconnected(client); };
+
+            if (!m_connected) {
+                m_callback_thread_pool.push(already_disconnected_callback);
+                return false;
+            }
+            m_connected = false;
+            m_connection_data->m_socket.close();
+            m_connection_data->m_io_service.stop();
+            m_connection_data->m_io_service_thread.join();
+            m_connection_data = nullptr;
+            m_callback_thread_pool.push(disconnect_callback);
+            return true;
+        }
+
+        virtual bool send(buffer_t &buffer) override
+        {
+            if (!m_connected) {
+                return false;
+            }
+
+            auto client = this->as_shared();
+
+            const auto asio_send_callback =
+                [this, client, buffer]
+                (const boost::system::error_code& ec, size_t bytes_transferred) {
+
+                    const auto on_error = [this, client, ec]() {
+                        this->m_on_send_error(client, ec);
+                    };
+
+                    const auto on_success = [this, client, buffer, ec, bytes_transferred]() {
+                        this->m_on_send_success(client, buffer, ec, bytes_transferred);
+                    };
+
+                    this->m_callback_thread_pool.push(ec ? on_error : on_success);
+                };
+
+            const auto operation_canceled_callback =
+                [this, client]() {
+                    this->m_on_send_error(client, bsytem::error_code::make_error_code(bsystem::errc::operation_canceled));
+                };
+
+            if (this->m_on_send(client, buffer)) {
+                m_connection_data->m_socket.async_send(boost::asio::buffer(buffer), asio_send_callback);
+            } else {
+                m_callback_thread_pool.push(operation_canceled_callback);
+            }
+            return true;
+        }
+    };
+
 }
