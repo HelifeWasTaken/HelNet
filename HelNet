@@ -49,10 +49,8 @@ namespace net
         {
             m_threads.emplace_back([this](F &&fthread, Args &&...args_thread) { 
                 fthread(std::forward<Args>(args_thread)...);
-                std::unique_lock<std::mutex> lock(m_mutex);
-                lock.lock();
+                std::lock_guard<std::mutex> lock(m_mutex);
                 m_ids.push(std::this_thread::get_id());
-
                 m_notifier.notify_one();
             }, std::forward<F>(f), std::forward<Args>(args)...);
         }
@@ -76,7 +74,14 @@ namespace net
             {
                 auto id = m_ids.front();
                 m_ids.pop();
-                m_threads.remove_if([id](const std::thread &t) { return t.get_id() == id; });
+                m_threads.remove_if([id](std::thread &t) {
+                    if (t.get_id() == id)
+                    {
+                        t.join();
+                        return true;
+                    }
+                    return false;
+                });
             }
         }
 
@@ -154,6 +159,7 @@ namespace net
         {
             m_stop = true;
             clear();
+            m_async_thread_pool_update_thread.join();
         }
     };
 
@@ -191,10 +197,8 @@ namespace net
 
     using client_on_connect_callback            = std::function<void(base_abstract_client& client)>;
     using client_on_connect_error_callback      = std::function<void(base_abstract_client& client, const boost::system::error_code& ec)>;
-    using client_already_connected_callback     = std::function<void(base_abstract_client& client)>;
 
     using client_on_disconnect_callback         = std::function<void(base_abstract_client& client)>;
-    using client_already_disconnected_callback  = std::function<void(base_abstract_client& client)>;
 
     // on_receive_* sends a copy of the buffer
     using client_on_receive_callback            = std::function<void(base_abstract_client& client, buffer_t& buffer_copy, const size_t& recv_bytes)>;
@@ -216,10 +220,8 @@ namespace net
         // callbacks
         client_on_connect_callback m_on_connect;
         client_on_connect_error_callback m_on_connect_error;
-        client_already_connected_callback m_already_connected;
 
         client_on_disconnect_callback m_on_disconnect;
-        client_already_connected_callback m_already_disconnected;
 
         client_on_receive_callback m_on_receive;
         client_on_receive_error_callback m_on_receive_error;
@@ -241,9 +243,7 @@ namespace net
         base_abstract_client()
             : m_on_connect(nullptr)
             , m_on_connect_error(nullptr)
-            , m_already_connected(nullptr)
             , m_on_disconnect(nullptr)
-            , m_already_disconnected(nullptr)
             , m_on_receive(nullptr)
             , m_on_receive_error(nullptr)
             , m_on_send(nullptr)
@@ -266,19 +266,9 @@ namespace net
             m_on_connect_error = callback;
         }
 
-        void set_already_connected(const client_already_connected_callback &callback)
-        {
-            m_already_connected = callback;
-        }
-
         void set_on_disconnect(const client_on_disconnect_callback &callback)
         {
             m_on_disconnect = callback;
-        }
-
-        void set_already_disconnected(const client_already_connected_callback &callback)
-        {
-            m_already_disconnected = callback;
         }
 
         void set_on_receive(const client_on_receive_callback &callback)
@@ -333,9 +323,7 @@ namespace net
         {
             return m_on_connect &&
                 m_on_connect_error &&
-                m_already_connected &&
                 m_on_disconnect &&
-                m_already_disconnected &&
                 m_on_receive &&
                 m_on_receive_error &&
                 m_on_send &&
@@ -370,14 +358,14 @@ namespace net
                 , m_socket(m_io_service)
             {
             }
+
+            ~connection_data() = default;
         };
     
     private:
         using base_abstract_client::m_on_connect;
         using base_abstract_client::m_on_connect_error;
-        using base_abstract_client::m_already_connected;
         using base_abstract_client::m_on_disconnect;
-        using base_abstract_client::m_already_disconnected;
         using base_abstract_client::m_on_receive;
         using base_abstract_client::m_on_receive_error;
         using base_abstract_client::m_on_send;
@@ -420,7 +408,6 @@ namespace net
             );
         }
 
-    public:
         base_client()
         {
             set_on_connect([](base_abstract_client& client) {
@@ -431,16 +418,8 @@ namespace net
                 std::cout << "Default on_connect_error for client: " << &client << " with error: " << ec.message() << std::endl;
             });
 
-            set_already_connected([](base_abstract_client& client) {
-                std::cout << "Default already_connected for client: " << &client << std::endl;
-            });
-
             set_on_disconnect([](base_abstract_client& client) {
                 std::cout << "Default on_disconnect for client: " << &client << std::endl;
-            });
-
-            set_already_disconnected([](base_abstract_client& client) {
-                std::cout << "Default already_disconnected for client: " << &client << std::endl;
             });
 
             set_on_receive([](base_abstract_client& client, const buffer_t &, const size_t &bytes_transferred) {
@@ -465,7 +444,17 @@ namespace net
             });
         }
 
-        virtual ~base_client() = default;
+    public:
+
+        static std::shared_ptr<base_client> make()
+        {
+            return std::make_shared<base_client>();
+        }
+
+        virtual ~base_client()
+        {
+            disconnect();
+        }
 
         virtual bool connect(const std::string &ip, const std::string &port) override
         {
@@ -475,10 +464,6 @@ namespace net
 
             if (m_connected)
             {
-                m_callback_thread_pool.push([this, client]()
-                {
-                    this->m_already_connected(*client);
-                });
                 return true;
             }
 
@@ -520,16 +505,12 @@ namespace net
 
         virtual bool disconnect() override
         {
-            auto client = this->as_shared();
-
             if (!m_connected)
             {
-                m_callback_thread_pool.push([this, client]()
-                {
-                    this->m_already_disconnected(*client);
-                });
                 return false;
             }
+
+            auto client = this->as_shared();
 
             m_connected = false;
             m_connection_data->m_socket.close();
