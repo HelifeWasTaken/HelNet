@@ -18,7 +18,9 @@
 
 #include <iostream>
 
-namespace helnet
+namespace hl
+{
+namespace net
 {
     // Thread queue
     class thread_list
@@ -178,31 +180,30 @@ namespace helnet
         return std::make_shared<std::vector<byte>>(*data);
     }
 
-    class base_client;
+    class base_abstract_client;
 
-    using client_on_connect_callback            = std::function<void(base_client& client)>;
-    using client_on_connect_error_callback      = std::function<void(base_client& client, const boost::system::error_code& ec)>;
-    using client_already_connected_callback     = std::function<void(base_client& client)>;
+    using client_on_connect_callback            = std::function<void(base_abstract_client& client)>;
+    using client_on_connect_error_callback      = std::function<void(base_abstract_client& client, const boost::system::error_code& ec)>;
+    using client_already_connected_callback     = std::function<void(base_abstract_client& client)>;
 
-    using client_on_disconnect_callback         = std::function<void(base_client& client)>;
-    using client_already_disconnected_callback  = std::function<void(base_client& client)>;
+    using client_on_disconnect_callback         = std::function<void(base_abstract_client& client)>;
+    using client_already_disconnected_callback  = std::function<void(base_abstract_client& client)>;
 
-    // TODO: Should it be shared_buffer_t& instead of const buffer_t&?
-    // Because on_receive_* sends a copy of the buffer
-    using client_on_receive_callback            = std::function<void(base_client& client, const buffer_t& buffer_copy, const size_t& recv_bytes)>;
-    using client_on_receive_error_callback      = std::function<void(base_client& client, const buffer_t& buffer_copy, const boost::system::error_code& ec, const size_t& recv_bytes)>;
+    // on_receive_* sends a copy of the buffer
+    using client_on_receive_callback            = std::function<void(base_abstract_client& client, buffer_t& buffer_copy, const size_t& recv_bytes)>;
+    using client_on_receive_error_callback      = std::function<void(base_abstract_client& client, buffer_t& buffer_copy, const boost::system::error_code& ec, const size_t& recv_bytes)>;
 
     // The buffer used in on_send_* is the same buffer that is sent
     // This means that the buffer is not copied but sent as a reference
     // Please keep this in mind
-    using client_on_send_callback               = std::function<bool(base_client& client, const buffer_t& buffer_copy)>;
-    using client_on_send_error_callback         = std::function<void(base_client& client, const buffer_t& buffer_copy, const boost::system::error_code& ec, const size_t& sent_bytes)>;
-    using client_on_send_success                = std::function<void(base_client& client, const buffer_t& buffer_copy, const boost::system::error_code& ec, const size_t& sent_bytes)>;
+    using client_on_send_callback               = std::function<bool(base_abstract_client& client, buffer_t& buffer_copy)>;
+    using client_on_send_error_callback         = std::function<void(base_abstract_client& client, const buffer_t& buffer_copy, const boost::system::error_code& ec, const size_t& sent_bytes)>;
+    using client_on_send_success                = std::function<void(base_abstract_client& client, const buffer_t& buffer_copy, const boost::system::error_code& ec, const size_t& sent_bytes)>;
 
-    using shared_base_client = std::shared_ptr<base_client>;
+    using shared_base_abstract_client = std::shared_ptr<base_abstract_client>;
 
     // base client class
-    class base_client : public std::enable_shared_from_this<base_client>
+    class base_abstract_client : public std::enable_shared_from_this<base_abstract_client>
     {
     protected:
         // callbacks
@@ -283,13 +284,13 @@ namespace helnet
         shared_buffer_t m_receive_buffer;
 
     public:
-        base_client()
+        base_abstract_client()
         {
             m_receive_buffer = make_shared_buffer(default_receive_buffer_size);
             m_connected = false;
         }
 
-        virtual ~base_client() = default;
+        virtual ~base_abstract_client() = default;
 
         bool connected() const
         {
@@ -306,7 +307,7 @@ namespace helnet
             return m_receive_buffer;
         }
 
-        shared_base_client as_shared()
+        shared_base_abstract_client as_shared()
         {
             return shared_from_this();
         }
@@ -331,21 +332,22 @@ namespace helnet
     };
 
     // TCP client class
-    class base_tcp_client : public base_client
+    template<class Protocol>
+    class base_client : public base_abstract_client
     {
     public:
-        struct base_tcp_client_connection_data
+        struct connection_data 
         {
-            boost::asio::ip::tcp::resolver m_resolver;
-            boost::asio::ip::tcp::resolver::query m_query;
-            boost::asio::ip::tcp::resolver::iterator m_endpoint_iterator;
-            boost::asio::ip::tcp::socket m_socket;
+            typename Protocol::resolver m_resolver;
+            typename Protocol::resolver::query m_query;
+            typename Protocol::resolver::iterator m_endpoint_iterator;
+            typename Protocol::socket m_socket;
             boost::asio::io_service m_io_service;
             std::thread m_io_service_thread;
 
-            base_tcp_client_connection_data(const std::string &ip, const uint16_t &port, const std::string &tcp_resolver_query)
+            connection_data(const std::string &ip, const uint16_t &port, const std::string &resolver_query)
                 : m_resolver(m_io_service)
-                , m_query(ip, tcp_resolver_query)
+                , m_query(ip, resolver_query)
                 , m_endpoint_iterator(m_resolver.resolve(m_query))
                 , m_socket(m_io_service)
             {
@@ -353,20 +355,20 @@ namespace helnet
         };
     
     private:
-        using base_client::m_on_connect;
-        using base_client::m_on_connect_error;
-        using base_client::m_already_connected;
-        using base_client::m_on_disconnect;
-        using base_client::m_already_disconnected;
-        using base_client::m_on_receive;
-        using base_client::m_on_receive_error;
-        using base_client::m_on_send;
-        using base_client::m_on_send_error;
-        using base_client::m_on_send_success;
+        using base_abstract_client::m_on_connect;
+        using base_abstract_client::m_on_connect_error;
+        using base_abstract_client::m_already_connected;
+        using base_abstract_client::m_on_disconnect;
+        using base_abstract_client::m_already_disconnected;
+        using base_abstract_client::m_on_receive;
+        using base_abstract_client::m_on_receive_error;
+        using base_abstract_client::m_on_send;
+        using base_abstract_client::m_on_send_error;
+        using base_abstract_client::m_on_send_success;
 
     private:
 
-        std::shared_ptr<base_tcp_client_connection_data> m_connection_data;
+        std::shared_ptr<connection_data> m_connection_data;
 
         void _start_reading()
         {
@@ -401,51 +403,51 @@ namespace helnet
         }
 
     public:
-        base_tcp_client()
+        base_client()
         {
-            set_on_connect([](base_client& client) {
+            set_on_connect([](base_abstract_client& client) {
                 std::cout << "Default on_connect for client: " << &client << std::endl;
             });
 
-            set_on_connect_error([](base_client& client, const boost::system::error_code &ec) {
+            set_on_connect_error([](base_abstract_client& client, const boost::system::error_code &ec) {
                 std::cout << "Default on_connect_error for client: " << &client << " with error: " << ec.message() << std::endl;
             });
 
-            set_already_connected([](base_client& client) {
+            set_already_connected([](base_abstract_client& client) {
                 std::cout << "Default already_connected for client: " << &client << std::endl;
             });
 
-            set_on_disconnect([](base_client& client) {
+            set_on_disconnect([](base_abstract_client& client) {
                 std::cout << "Default on_disconnect for client: " << &client << std::endl;
             });
 
-            set_already_disconnected([](base_client& client) {
+            set_already_disconnected([](base_abstract_client& client) {
                 std::cout << "Default already_disconnected for client: " << &client << std::endl;
             });
 
-            set_on_receive([](base_client& client, const buffer_t &buffer, const size_t &bytes_transferred) {
+            set_on_receive([](base_abstract_client& client, const buffer_t &buffer, const size_t &bytes_transferred) {
                 std::cout << "Default on_receive for client: " << &client << " with " << bytes_transferred << " bytes" << std::endl;
             });
 
-            set_on_receive_error([](base_client& client, const buffer_t &buffer, const boost::system::error_code &ec, const size_t &bytes_transferred) {
+            set_on_receive_error([](base_abstract_client& client, const buffer_t &buffer, const boost::system::error_code &ec, const size_t &bytes_transferred) {
                 std::cout << "Default on_receive_error for client: " << &client << " with error: " << ec.message() << std::endl;
             });
 
-            set_on_send([](base_client& client, const buffer_t &buffer) {
+            set_on_send([](base_abstract_client& client, const buffer_t &buffer) {
                 std::cout << "Default on_send for client: " << &client << std::endl;
                 return true;
             });
 
-            set_on_send_error([](base_client& client, const buffer_t &buffer, const boost::system::error_code &ec, const size_t& bytes_transferred) {
+            set_on_send_error([](base_abstract_client& client, const buffer_t &buffer, const boost::system::error_code &ec, const size_t& bytes_transferred) {
                 std::cout << "Default on_send_error for client: " << &client << " with error: " << ec.message() << std::endl;
             });
 
-            set_on_send_success([](base_client& client, const buffer_t &buffer, const boost::system::error_code &ec, const size_t& bytes_transferred) {
+            set_on_send_success([](base_abstract_client& client, const buffer_t &buffer, const boost::system::error_code &ec, const size_t& bytes_transferred) {
                 std::cout << "Default on_send_success for client: " << &client << " with " << bytes_transferred << " bytes" << std::endl;
             });
         }
 
-        virtual ~base_tcp_client() = default;
+        virtual ~base_client() = default;
 
         virtual bool connect(const std::string &ip, const uint16_t &port, const std::string& query_resolver_protocol="daytime") override
         {
@@ -462,7 +464,7 @@ namespace helnet
                 return true;
             }
 
-            m_connection_data = std::make_shared<base_tcp_client_connection_data>(ip, port, query_resolver_protocol);
+            m_connection_data = std::make_shared<connection_data>(ip, port, query_resolver_protocol);
 
             boost::system::error_code error;
             boost::asio::ip::tcp::resolver::iterator end;
@@ -567,4 +569,8 @@ namespace helnet
             return true;
         }
     };
+
+    using tcp_client = base_client<boost::asio::ip::tcp>;
+    using udp_client = base_client<boost::asio::ip::udp>;
+}
 }
