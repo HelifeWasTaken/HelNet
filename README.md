@@ -29,6 +29,6 @@ int main(int argc, char **argv)
         return true;
     });
 
-    client.connect(argv[1], std::stoi(argv[2]));
+    client.connect(argv[1], argv[2]);
 }
 ```

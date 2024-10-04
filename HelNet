@@ -27,31 +27,33 @@ namespace net
     {
     private:
         std::list<std::thread> m_threads;
-        std::queue<std::thread::id> m_ids; // all the current threads ids that are done
+
+        // all the current threads ids that are done
+        std::queue<std::thread::id> m_ids;
+
         mutable std::mutex m_mutex;
 
         // Optionally get updates on the events
-        std::condition_variable* m_condition;
+        std::condition_variable& m_notifier;
 
     public:
-        thread_list() 
-            : m_condition(nullptr) {}
-        thread_list(std::condition_variable &condition) : m_condition(&condition) {}
+        thread_list(std::condition_variable &notifier)
+            : m_threads()
+            , m_ids()
+            , m_mutex()
+            , m_notifier(notifier)
+        {}
 
         template <typename F, typename... Args>
         void push(F &&f, Args &&...args)
         {
-            m_threads.emplace_back([this](F &&f, Args &&...args) { 
-                f(std::forward<Args>(args)...);
+            m_threads.emplace_back([this](F &&fthread, Args &&...args_thread) { 
+                fthread(std::forward<Args>(args_thread)...);
                 std::unique_lock<std::mutex> lock(m_mutex);
                 lock.lock();
                 m_ids.push(std::this_thread::get_id());
 
-                // Updates when one of the threads is done if the condition variable is set
-                if (m_condition)
-                {
-                    m_condition->notify_one();
-                }
+                m_notifier.notify_one();
             }, std::forward<F>(f), std::forward<Args>(args)...);
         }
 
@@ -103,7 +105,12 @@ namespace net
 
     public:
         async_thread_pool()
-            : m_stop(false), m_has_event(false), m_thread_list(m_condition)
+            : m_stop(false)
+            , m_has_event(false)
+            , m_condition()
+            , m_mutex()
+            , m_async_thread_pool_update_thread()
+            , m_thread_list(m_condition)
         {
             m_async_thread_pool_update_thread = std::thread([this]() {
                 do {
@@ -124,9 +131,9 @@ namespace net
             }
 
             m_thread_list.push(
-               [this](F &&f, Args &&...args)
+               [this](F &&fthread, Args &&...args_thread)
                {
-                   f(std::forward<Args>(args)...);
+                   fthread(std::forward<Args>(args_thread)...);
                    m_has_event = true;
                    m_condition.notify_one();
                }, std::forward<F>(f), std::forward<Args>(args)...);
@@ -198,7 +205,7 @@ namespace net
     // Please keep this in mind
     using client_on_send_callback               = std::function<bool(base_abstract_client& client, buffer_t& buffer_copy)>;
     using client_on_send_error_callback         = std::function<void(base_abstract_client& client, const buffer_t& buffer_copy, const boost::system::error_code& ec, const size_t& sent_bytes)>;
-    using client_on_send_success                = std::function<void(base_abstract_client& client, const buffer_t& buffer_copy, const boost::system::error_code& ec, const size_t& sent_bytes)>;
+    using client_on_send_success                = std::function<void(base_abstract_client& client, const buffer_t& buffer_copy, const size_t& sent_bytes)>;
 
     using shared_base_abstract_client = std::shared_ptr<base_abstract_client>;
 
@@ -207,19 +214,19 @@ namespace net
     {
     protected:
         // callbacks
-        client_on_connect_callback m_on_connect = nullptr;
-        client_on_connect_error_callback m_on_connect_error = nullptr;
-        client_already_connected_callback m_already_connected = nullptr;
+        client_on_connect_callback m_on_connect;
+        client_on_connect_error_callback m_on_connect_error;
+        client_already_connected_callback m_already_connected;
 
-        client_on_disconnect_callback m_on_disconnect = nullptr;
-        client_already_connected_callback m_already_disconnected = nullptr;
+        client_on_disconnect_callback m_on_disconnect;
+        client_already_connected_callback m_already_disconnected;
 
-        client_on_receive_callback m_on_receive = nullptr;
-        client_on_receive_error_callback m_on_receive_error = nullptr;
+        client_on_receive_callback m_on_receive;
+        client_on_receive_error_callback m_on_receive_error;
 
-        client_on_send_callback m_on_send = nullptr;
-        client_on_send_error_callback m_on_send_error = nullptr;
-        client_on_send_success m_on_send_success = nullptr;
+        client_on_send_callback m_on_send;
+        client_on_send_error_callback m_on_send_error;
+        client_on_send_success m_on_send_success;
 
         // callback thread pool
         async_thread_pool m_callback_thread_pool;
@@ -227,7 +234,28 @@ namespace net
         // connection status
         std::atomic_bool m_connected;
 
+    private:
+        shared_buffer_t m_receive_buffer;
+
     public:
+        base_abstract_client()
+            : m_on_connect(nullptr)
+            , m_on_connect_error(nullptr)
+            , m_already_connected(nullptr)
+            , m_on_disconnect(nullptr)
+            , m_already_disconnected(nullptr)
+            , m_on_receive(nullptr)
+            , m_on_receive_error(nullptr)
+            , m_on_send(nullptr)
+            , m_on_send_error(nullptr)
+            , m_on_send_success(nullptr)
+            , m_callback_thread_pool()
+            , m_connected(false)
+            , m_receive_buffer(make_shared_buffer(default_receive_buffer_size))
+        {}
+
+        virtual ~base_abstract_client() = default;
+
         void set_on_connect(const client_on_connect_callback &callback)
         {
             m_on_connect = callback;
@@ -280,18 +308,7 @@ namespace net
 
         static constexpr size_t default_receive_buffer_size = 1024;
 
-    private:
-        shared_buffer_t m_receive_buffer;
-
     public:
-        base_abstract_client()
-        {
-            m_receive_buffer = make_shared_buffer(default_receive_buffer_size);
-            m_connected = false;
-        }
-
-        virtual ~base_abstract_client() = default;
-
         bool connected() const
         {
             return m_connected;
@@ -326,7 +343,7 @@ namespace net
                 m_on_send_success;
         }
 
-        virtual bool connect(const std::string &ip, const uint16_t &port, const std::string& query_resolver_protocol) = 0;
+        virtual bool connect(const std::string &ip, const std::string &port) = 0;
         virtual bool disconnect() = 0;
         virtual bool send(shared_buffer_t &buffer) = 0;
     };
@@ -338,17 +355,18 @@ namespace net
     public:
         struct connection_data 
         {
-            typename Protocol::resolver m_resolver;
-            typename Protocol::resolver::query m_query;
-            typename Protocol::resolver::iterator m_endpoint_iterator;
-            typename Protocol::socket m_socket;
             boost::asio::io_service m_io_service;
             std::thread m_io_service_thread;
 
-            connection_data(const std::string &ip, const uint16_t &port, const std::string &resolver_query)
-                : m_resolver(m_io_service)
-                , m_query(ip, resolver_query)
-                , m_endpoint_iterator(m_resolver.resolve(m_query))
+            typename Protocol::resolver m_resolver;
+            typename Protocol::resolver::iterator m_endpoint_iterator;
+            typename Protocol::socket m_socket;
+
+            connection_data(const std::string &host, const std::string &port)
+                : m_io_service()
+                , m_io_service_thread()
+                , m_resolver(m_io_service)
+                , m_endpoint_iterator(m_resolver.resolve({ host, port }))
                 , m_socket(m_io_service)
             {
             }
@@ -368,7 +386,7 @@ namespace net
 
     private:
 
-        std::shared_ptr<connection_data> m_connection_data;
+        std::shared_ptr<connection_data> m_connection_data = nullptr;
 
         void _start_reading()
         {
@@ -425,31 +443,31 @@ namespace net
                 std::cout << "Default already_disconnected for client: " << &client << std::endl;
             });
 
-            set_on_receive([](base_abstract_client& client, const buffer_t &buffer, const size_t &bytes_transferred) {
+            set_on_receive([](base_abstract_client& client, const buffer_t &, const size_t &bytes_transferred) {
                 std::cout << "Default on_receive for client: " << &client << " with " << bytes_transferred << " bytes" << std::endl;
             });
 
-            set_on_receive_error([](base_abstract_client& client, const buffer_t &buffer, const boost::system::error_code &ec, const size_t &bytes_transferred) {
-                std::cout << "Default on_receive_error for client: " << &client << " with error: " << ec.message() << std::endl;
+            set_on_receive_error([](base_abstract_client& client, const buffer_t &, const boost::system::error_code &ec, const size_t &bytes_transferred) {
+                std::cout << "Default on_receive_error for client: " << &client << " with error: " << ec.message() << " and " << bytes_transferred << " bytes" << std::endl;
             });
 
-            set_on_send([](base_abstract_client& client, const buffer_t &buffer) {
+            set_on_send([](base_abstract_client& client, const buffer_t &) {
                 std::cout << "Default on_send for client: " << &client << std::endl;
                 return true;
             });
 
-            set_on_send_error([](base_abstract_client& client, const buffer_t &buffer, const boost::system::error_code &ec, const size_t& bytes_transferred) {
-                std::cout << "Default on_send_error for client: " << &client << " with error: " << ec.message() << std::endl;
+            set_on_send_error([](base_abstract_client& client, const buffer_t &, const boost::system::error_code &ec, const size_t& bytes_transferred) {
+                std::cout << "Default on_send_error for client: " << &client << " with error: " << ec.message() << " and " << bytes_transferred << " bytes" << std::endl;
             });
 
-            set_on_send_success([](base_abstract_client& client, const buffer_t &buffer, const boost::system::error_code &ec, const size_t& bytes_transferred) {
+            set_on_send_success([](base_abstract_client& client, const buffer_t &, const size_t& bytes_transferred) {
                 std::cout << "Default on_send_success for client: " << &client << " with " << bytes_transferred << " bytes" << std::endl;
             });
         }
 
         virtual ~base_client() = default;
 
-        virtual bool connect(const std::string &ip, const uint16_t &port, const std::string& query_resolver_protocol="daytime") override
+        virtual bool connect(const std::string &ip, const std::string &port) override
         {
             assert(callbacks_are_non_null());
 
@@ -464,7 +482,7 @@ namespace net
                 return true;
             }
 
-            m_connection_data = std::make_shared<connection_data>(ip, port, query_resolver_protocol);
+            m_connection_data = std::make_shared<connection_data>(ip, port);
 
             boost::system::error_code error;
             boost::asio::ip::tcp::resolver::iterator end;
@@ -477,9 +495,9 @@ namespace net
 
             if (error)
             {
-                const auto on_connect_error_callback = [this, client, ec=error]()
+                const auto on_connect_error_callback = [this, client, error]()
                 {
-                    this->m_on_connect_error(*client, ec);
+                    this->m_on_connect_error(*client, error);
                 };
                 m_callback_thread_pool.push(on_connect_error_callback);
                 return false;
@@ -555,9 +573,9 @@ namespace net
                 }
                 else
                 {
-                    m_callback_thread_pool.push([this, client, buffer, ec, bytes_transferred]()
+                    m_callback_thread_pool.push([this, client, buffer, bytes_transferred]()
                     {
-                        this->m_on_send_success(*client, *buffer, ec, bytes_transferred);
+                        this->m_on_send_success(*client, *buffer, bytes_transferred);
                     });
                 }
             };
