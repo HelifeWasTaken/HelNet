@@ -23,6 +23,7 @@ int main(int argc, char **argv)
     });
     client->set_on_send([](hl::net::base_abstract_client&, const hl::net::buffer_t &) { return true; });
 
+    client->connect(argv[1], argv[2]);
     while (true);
 }
 ```
@@ -48,6 +49,7 @@ int main(int argc, char **argv)
     });
     client->set_on_send([](hl::net::base_abstract_client&, const hl::net::buffer_t &) { return true; });
 
+    client->connect(argv[1], argv[2]);
     while (true);
 }
 ```
