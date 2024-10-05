@@ -11,20 +11,19 @@ int main(int argc, char **argv)
 {
     if (argc < 3)
     {
-        std::cout << "Usage: " << argv[0] << " <ip> <tcp-port>" << std::endl;
+        spdlog::error("Usage: {} <host> <tcp-port>", argv[0]);
         return 1;
     }
 
-    auto client = hl::net::tcp_client::make();
-
-    client->set_on_receive([](hl::net::base_abstract_client&, const hl::net::buffer_t &buffer, const size_t &bytes_transferred) {
-        std::cout << "Received " << bytes_transferred << " bytes" << std::endl;
-        std::cout << "Buffer content: " << std::string(buffer.begin(), buffer.end()) << std::endl;
-    });
-    client->set_on_send([](hl::net::base_abstract_client&, const hl::net::buffer_t &) { return true; });
-
-    client->connect(argv[1], argv[2]);
-    while (true);
+    try {
+        hl::net::tcp_client_wrapper client_wrapper(argv[1], argv[2]);
+        while (true) {
+            client_wrapper.client().send_string("Hello, World!");
+        }
+    } catch (const hl::net::tcp_client_wrapper::Error &error) {
+        SPDLOG_CRITICAL("Catched Error: {}", error.what());
+        return 1;
+    }
 }
 ```
 
@@ -37,19 +36,59 @@ int main(int argc, char **argv)
 {
     if (argc < 3)
     {
-        std::cout << "Usage: " << argv[0] << " <ip> <tcp-port>" << std::endl;
+        spdlog::error("Usage: {} <host> <tcp-port>", argv[0]);
         return 1;
     }
 
-    auto client = hl::net::udp_client::make();
+    try {
+        hl::net::udp_client_wrapper client_wrapper(argv[1], argv[2]);
+        while (true) {
+            client_wrapper.client().send_string("Hello, World!");
+        }
+    } catch (const hl::net::tcp_client_wrapper::Error &error) {
+        SPDLOG_CRITICAL("Catched Error: {}", error.what());
+        return 1;
+    }
+}
+```
 
-    client->set_on_receive([](hl::net::base_abstract_client&, const hl::net::buffer_t &buffer, const size_t &bytes_transferred) {
-        std::cout << "Received " << bytes_transferred << " bytes" << std::endl;
-        std::cout << "Buffer content: " << std::string(buffer.begin(), buffer.end()) << std::endl;
-    });
-    client->set_on_send([](hl::net::base_abstract_client&, const hl::net::buffer_t &) { return true; });
+## Client Interoperability
 
-    client->connect(argv[1], argv[2]);
-    while (true);
+```cpp
+#include "HelNet"
+
+using namespace hl::net;
+
+template<typename Protocol>
+int hello_world_client()
+{
+    try {
+        client_wrapper<Protocol> client_wrapper(argv[1], argv[2]);
+        while (true) {
+            client_wrapper.client().send_string("Hello, World!");
+        }
+    } catch (const hl::net::tcp_client_wrapper::Error &error) {
+        SPDLOG_CRITICAL("Catched Error: {}", error.what());
+        return 1;
+    }
+}
+
+int main(int argc, char **argv)
+{
+    const std::string protocol = argc < 4 ? "tcp" : argv[3];
+
+    if (argc < 3)
+    {
+        spdlog::error("Usage: {} <host> <tcp-port> [protocol(tcp*/udp)]", argv[0]);
+        return 1;
+    }
+
+    if (protocol == "tcp")
+        return hello_world_client<tcp_client>(); // TCP
+    else if (protocol == "udp")
+        return hello_world_client<udp_client>(); // UDP
+    else
+        spdlog::error("Unknown protocol: {}", argv[3]);
+        return 1;
 }
 ```

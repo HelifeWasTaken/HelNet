@@ -18,4 +18,6 @@
 	 -Wunreachable-code -Wunused \
 	 -Wunused-parameter \
 	 -Wvariadic-macros \
-	 -Wwrite-strings -Wno-inline -Wno-non-virtual-dtor main.cpp 2>&1
+	 -Wwrite-strings -Wno-inline -Wno-non-virtual-dtor \
+	 -lspdlog -lfmt \
+	 main.cpp 2>&1
