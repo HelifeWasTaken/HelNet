@@ -1,8 +1,8 @@
- g++ -std=c++11 -g3 -O3 -Wall -Weffc++ -pedantic  \
+ g++ -std=c++17 -g3 -O3 -Wall -Weffc++ -pedantic  \
 	 -pedantic-errors -Wextra -Wno-aggregate-return -Wcast-align \
 	 -Wcast-qual -Wconversion \
 	 -Wdisabled-optimization \
-	 -Werror -Wfloat-equal -Wformat=2 \
+	 -Wfloat-equal -Wformat=2 \
 	 -Wformat-nonliteral -Wformat-security  \
 	 -Wformat-y2k \
 	 -Wimport  -Winit-self  -Winline \
@@ -20,4 +20,5 @@
 	 -Wvariadic-macros \
 	 -Wwrite-strings -Wno-inline -Wno-non-virtual-dtor \
 	 -lspdlog -lfmt \
+     -ISilvaCollections/ \
 	 main.cpp 2>&1

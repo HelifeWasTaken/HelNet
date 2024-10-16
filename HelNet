@@ -18,6 +18,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include <hl/silva/Collections>
+
 namespace hl
 {
 namespace net
@@ -35,151 +37,6 @@ namespace net
         const char *what() const noexcept override
         {
             return m_error.c_str();
-        }
-    };
-
-    // Thread queue
-    class thread_list
-    {
-    private:
-        std::list<std::thread> m_threads;
-
-        // all the current threads ids that are done
-        std::queue<std::thread::id> m_ids;
-
-        mutable std::mutex m_thread_mutex;
-        mutable std::mutex m_ids_mutex;
-
-        // Optionally get updates on the events
-        std::condition_variable& m_notifier;
-
-    public:
-        thread_list(std::condition_variable &notifier)
-            : m_threads()
-            , m_ids()
-            , m_thread_mutex()
-            , m_ids_mutex()
-            , m_notifier(notifier)
-        {}
-
-        template <typename F, typename... Args>
-        void push(F &&f, Args &&...args)
-        {
-            std::lock_guard<std::mutex> th_lock(m_thread_mutex);
-            m_threads.emplace_back([this](F &&fthread, Args &&...args_thread) { 
-                fthread(std::forward<Args>(args_thread)...);
-                std::lock_guard<std::mutex> ids_lock(m_ids_mutex);
-                m_ids.push(std::this_thread::get_id());
-                m_notifier.notify_one();
-            }, std::forward<F>(f), std::forward<Args>(args)...);
-        }
-
-        void join()
-        {
-            std::lock_guard<std::mutex> lock(m_thread_mutex);
-            for (auto &t : m_threads)
-            {
-                t.join();
-            }
-            m_ids = std::queue<std::thread::id>(); // clear the ids
-            m_threads.clear();
-        }
-
-        void update()
-        {
-            // iterate through the ids and remove the threads that are done
-            std::lock_guard<std::mutex> th_lock(m_thread_mutex);
-            while (!m_ids.empty())
-            {
-                std::lock_guard<std::mutex> id_lock(m_ids_mutex);
-                auto id = m_ids.front();
-                m_ids.pop();
-                m_threads.remove_if([id](std::thread &t) {
-                    if (t.get_id() == id)
-                    {
-                        t.join();
-                        return true;
-                    }
-                    return false;
-                });
-            }
-        }
-
-        bool empty() const
-        {
-            std::lock_guard<std::mutex> lock(m_thread_mutex), lock_ids(m_ids_mutex);
-            return m_threads.empty() && m_ids.empty();
-        }
-
-        ~thread_list()
-        {
-            join();
-        }
-    };
-
-    class async_thread_pool
-    {
-    private:
-        std::atomic_bool m_stop;
-        std::atomic_bool m_has_event;
-        std::condition_variable m_condition;
-        std::mutex m_mutex;
-
-        std::thread m_async_thread_pool_update_thread;
-        thread_list m_thread_list;
-
-    public:
-        async_thread_pool()
-            : m_stop(false)
-            , m_has_event(false)
-            , m_condition()
-            , m_mutex()
-            , m_async_thread_pool_update_thread()
-            , m_thread_list(m_condition)
-        {
-            m_async_thread_pool_update_thread = std::thread([this]() {
-                do {
-                    m_thread_list.update();
-                    std::unique_lock<std::mutex> lock(m_mutex);
-                    m_condition.wait(lock, [this] { return m_stop || m_has_event; });
-                    m_has_event = false;
-                } while (!m_stop);
-            });
-        }
-
-        template <typename F, typename... Args>
-        void push(F &&f, Args &&...args)
-        {
-            if (m_stop)
-            {
-                return; // Ignore silently (Here just in case of Race condition)
-            }
-
-            m_thread_list.push(
-               [this](F &&fthread, Args &&...args_thread)
-               {
-                   fthread(std::forward<Args>(args_thread)...);
-                   m_has_event = true;
-                   m_condition.notify_one();
-               }, std::forward<F>(f), std::forward<Args>(args)...);
-        }
-
-        void clear()
-        {
-            m_thread_list.join();
-            m_condition.notify_one();
-        }
-
-        bool empty() const
-        {
-            return m_thread_list.empty();
-        }
-
-        ~async_thread_pool()
-        {
-            m_stop = true;
-            clear();
-            m_async_thread_pool_update_thread.join();
         }
     };
 
@@ -226,7 +83,7 @@ namespace net
     // Please keep this in mind
     using client_on_send_callback               = std::function<bool(base_abstract_client& client, buffer_t& buffer_copy, const size_t& size)>;
     using client_on_send_error_callback         = std::function<void(base_abstract_client& client, const buffer_t& buffer_copy, const boost::system::error_code& ec, const size_t& sent_bytes)>;
-    using client_on_send_success                = std::function<void(base_abstract_client& client, const buffer_t& buffer_copy, const size_t& sent_bytes)>;
+    using client_on_send_success_callback       = std::function<void(base_abstract_client& client, const buffer_t& buffer_copy, const size_t& sent_bytes)>;
 
     using shared_base_abstract_client = std::shared_ptr<base_abstract_client>;
 
@@ -245,18 +102,19 @@ namespace net
 
         client_on_send_callback m_on_send;
         client_on_send_error_callback m_on_send_error;
-        client_on_send_success m_on_send_success;
+        client_on_send_success_callback m_on_send_success;
 
         // callback thread pool
-        async_thread_pool m_callback_thread_pool;
+        hl::silva::collections::threads::BasicPoolAsync m_callback_thread_pool;
 
         // connection status
         std::atomic_bool m_connected;
+        std::atomic_bool m_healthy;
 
     private:
         shared_buffer_t m_receive_buffer;
 
-        std::mutex m_mutex;
+        mutable std::mutex m_alias_mutex;
         std::string m_alias;
 
     public:
@@ -271,23 +129,24 @@ namespace net
             , m_on_send_success(nullptr)
             , m_callback_thread_pool()
             , m_connected(false)
+            , m_healthy(false)
             , m_receive_buffer(make_shared_buffer())
-            , m_mutex()
+            , m_alias_mutex()
             , m_alias(fmt::format("{}", static_cast<void *>(this)))
         {}
 
         virtual ~base_abstract_client() = default;
 
-        const std::string get_alias()
+        const std::string get_alias() const
         {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            return m_alias;
+            std::lock_guard<std::mutex> lock(m_alias_mutex);
+            return std::string(m_alias);
         }
 
         void set_alias(const std::string &alias)
         {
             const std::string alias_copy = get_alias();
-            std::lock_guard<std::mutex> lock(m_mutex);
+            std::lock_guard<std::mutex> lock(m_alias_mutex);
             SPDLOG_INFO("Set alias for client: {} to: {}", alias_copy, alias);
             m_alias = alias;
         }
@@ -334,7 +193,7 @@ namespace net
             SPDLOG_INFO("Set on_send_error callback for client: {} with callback: {}", get_alias(), fmt::ptr(&callback));
         }
 
-        void set_on_send_success(const client_on_send_success &callback)
+        void set_on_send_success(const client_on_send_success_callback &callback)
         {
             m_on_send_success = callback;
             SPDLOG_INFO("Set on_send_success callback for client: {} with callback: {}", get_alias(), fmt::ptr(&callback));
@@ -344,6 +203,11 @@ namespace net
         bool connected() const
         {
             return m_connected;
+        }
+
+        bool healthy() const
+        {
+            return m_healthy && m_connected;
         }
 
         shared_buffer_t &receive_buffer()
@@ -451,8 +315,9 @@ namespace net
 
         void _start_reading()
         {
-            if (!m_connected)
+            if (!healthy())
             {
+                SPDLOG_WARN("Client is not healthy: {} may be either disconnected or received a non-recoverable error", get_alias());
                 return;
             }
 
@@ -472,22 +337,46 @@ namespace net
                     {
                         SPDLOG_ERROR("Error on receive for client: {} with error: {}", get_alias(), ec.message());
                         this->m_callback_thread_pool.push(
-                            [this, buffer_cpy, ec, bytes_transferred]()
-                            { this->m_on_receive_error(*this, *buffer_cpy, ec, bytes_transferred); });
-                        return;
+                        [this, buffer_cpy, ec, bytes_transferred]()
+                        {
+                            this->m_on_receive_error(*this, *buffer_cpy, ec, bytes_transferred);
+                        });
+                        switch (ec.value())
+                        {
+                        case boost::asio::error::eof:
+                        case boost::asio::error::connection_reset:
+                        case boost::asio::error::connection_aborted:
+                        case boost::asio::error::operation_aborted:
+                        case boost::asio::error::broken_pipe:
+                        case boost::asio::error::not_connected:
+                        case boost::asio::error::bad_descriptor:
+                        case boost::asio::error::fault:
+                        case boost::asio::error::host_not_found:
+                        // case boost::asio::error::host_not_found_try_again: == ::eof
+                        case boost::asio::error::host_unreachable:
+                        case boost::asio::error::network_down:
+                        case boost::asio::error::network_reset:
+                        case boost::asio::error::network_unreachable:
+                        case boost::asio::error::no_recovery:
+                            SPDLOG_ERROR("Client cannot connect: {} stopping reading due to {}, stopping read, considered not healthy!", get_alias(), ec.message());
+                            m_healthy = false;
+                        default:
+                            break;
+                        }
                     }
                     else
                     {
                         SPDLOG_INFO("Received {} bytes for client: {}", bytes_transferred, get_alias());
                         m_callback_thread_pool.push(
-                            [this, buffer_cpy, bytes_transferred]()
-                            { this->m_on_receive(*this, *buffer_cpy, bytes_transferred); }
-                        );
+                        [this, buffer_cpy, bytes_transferred]()
+                        {
+                            this->m_on_receive(*this, *buffer_cpy, bytes_transferred);
+                        });
                     }
 
-                    if (!m_connected)
+                    if (!healthy())
                     {
-                        SPDLOG_INFO("Client disconnected: {} stopping reading", get_alias());
+                        SPDLOG_INFO("Client not healthy: {} stopping reading", get_alias());
                         return;
                     }
 
@@ -517,11 +406,11 @@ namespace net
             });
 
             set_on_receive_error([](base_abstract_client& client, const buffer_t &, const boost::system::error_code &ec, const size_t &bytes_transferred) {
-                SPDLOG_ERROR("Default callback on_receive for client: {} error: {} bytes: {}", client.get_alias(), ec.message(), bytes_transferred);
+                SPDLOG_ERROR("Default callback on_receive_error for client: {} error: {} bytes: {}", client.get_alias(), ec.message(), bytes_transferred);
             });
 
             set_on_send([](base_abstract_client& client, const buffer_t &, const size_t &size) {
-                SPDLOG_INFO("Default callback on_send for client: {} bytes: {}", client.get_alias(), size);
+                SPDLOG_INFO("Default callback on_send for client: {} bytes: {}, allowing by default send", client.get_alias(), size);
                 return true;
             });
 
@@ -573,26 +462,37 @@ namespace net
 
             if (error)
             {
-                m_callback_thread_pool.push([this, error]()
+                SPDLOG_ERROR("Error connecting client: {} with error: {}", get_alias(), error.message());
+                m_on_connect_error(*this, error);
+                m_callback_thread_pool.push(
+                [this, error]()
                 {
                     this->m_on_connect_error(*this, error);
                 });
-                SPDLOG_ERROR("Error connecting client: {} with error: {}", get_alias(), error.message());
+                m_callback_thread_pool.stop();
                 return false;
             }
 
             m_connected = true;
+            m_healthy = true;
 
-            m_connection_data->m_io_service_thread = std::thread([this]()
+            m_connection_data->m_io_service_thread = std::thread(
+            [this]()
             {
-                SPDLOG_INFO("Starting io_service thread for client: {}", get_alias());
-                while (m_connected) {
+                SPDLOG_WARN("Starting io_service thread for client: {}", get_alias());
+                while (true) {
                     this->m_connection_data->m_io_service.run();
+                    if (healthy()) {
+                        this->m_connection_data->m_io_service.reset();
+                    } else {
+                        break;
+                    }
                 }
-                SPDLOG_INFO("Stopping io_service thread for client: {}", get_alias());
+                SPDLOG_WARN("Stopping io_service thread for client: {}", get_alias());
             });
 
-            m_callback_thread_pool.push([this]()
+            m_callback_thread_pool.push(
+            [this]()
             {
                 this->m_on_connect(*this);
             });
@@ -616,17 +516,21 @@ namespace net
             auto client = this->as_shared();
 
             m_connected = false;
+            m_healthy = false;
             m_connection_data->m_socket.close();
             m_connection_data->m_io_service.stop();
             m_connection_data->m_io_service_thread.join();
             m_connection_data = nullptr;
 
-            m_callback_thread_pool.push([this]()
+            m_callback_thread_pool.push(
+            [this]()
             {
                 this->m_on_disconnect(*this);
             });
 
             SPDLOG_INFO("Disconnected client: {}", get_alias());
+
+            m_callback_thread_pool.stop();
 
             return true;
         }
@@ -635,9 +539,9 @@ namespace net
         {
             SPDLOG_INFO("Sending {} bytes for client: {}", size, get_alias());
 
-            if (!m_connected)
+            if (!healthy())
             {
-                SPDLOG_ERROR("Cannot send data to disconnected client: {}", get_alias());
+                SPDLOG_ERROR("Cannot send data to from a non-healthy client: {}", get_alias());
                 return false;
             }
 
@@ -645,27 +549,55 @@ namespace net
             if (!this->m_on_send(*this, *buffer, size))
             {
                 SPDLOG_ERROR("Error on send for client: {} with error: {}", get_alias(), "on_send returned false");
-                m_callback_thread_pool.push([this, buffer]() {
+                m_callback_thread_pool.push(
+                [this, buffer]()
+                {
                     const static auto ec = boost::system::errc::make_error_code(boost::system::errc::operation_canceled);
                     this->m_on_send_error(*this, *buffer, ec, 0);
                 });
             }
 
             auto client = this->as_shared();
-            const auto asio_send_callback = [this, client, buffer](const boost::system::error_code &ec, size_t bytes_transferred)
+            const auto asio_send_callback = 
+            [this, client, buffer](const boost::system::error_code &ec, size_t bytes_transferred)
             {
                 if (ec)
                 {
                     SPDLOG_ERROR("Error on send for client: {} with error: {} and {} bytes", get_alias(), ec.message(), bytes_transferred);
-                    m_callback_thread_pool.push([this, buffer, ec, bytes_transferred]()
+                    m_callback_thread_pool.push(
+                    [this, buffer, ec, bytes_transferred]()
                     {
                         this->m_on_send_error(*this, *buffer, ec, bytes_transferred);
                     });
+
+                    switch (ec.value())
+                    {
+                    case boost::asio::error::eof:
+                    case boost::asio::error::connection_reset:
+                    case boost::asio::error::connection_aborted:
+                    case boost::asio::error::operation_aborted:
+                    case boost::asio::error::broken_pipe:
+                    case boost::asio::error::not_connected:
+                    case boost::asio::error::bad_descriptor:
+                    case boost::asio::error::fault:
+                    case boost::asio::error::host_not_found:
+                    // case boost::asio::error::host_not_found_try_again: == ::eof
+                    case boost::asio::error::host_unreachable:
+                    case boost::asio::error::network_down:
+                    case boost::asio::error::network_reset:
+                    case boost::asio::error::network_unreachable:
+                    case boost::asio::error::no_recovery:
+                        SPDLOG_ERROR("Client cannot send data: {} due to {}, stopping send, considered not healthy!", get_alias(), ec.message());
+                        m_healthy = false;
+                    default:
+                        break;
+                    }
                 }
                 else
                 {
                     SPDLOG_INFO("Sent {} bytes for client: {}", bytes_transferred, get_alias());
-                    m_callback_thread_pool.push([this, buffer, bytes_transferred]()
+                    m_callback_thread_pool.push(
+                    [this, buffer, bytes_transferred]()
                     {
                         this->m_on_send_success(*this, *buffer, bytes_transferred);
                     });
@@ -691,11 +623,13 @@ namespace net
     class client_wrapper
     {
     private:
-        typename Protocol::shared_t m_client;
-        const std::string m_host;
-        const std::string m_port;
+        typename Protocol::shared_t shared_client;
 
     public:
+        Protocol &client;
+        const std::string host;
+        const std::string port;
+
         class Error : public hl::net::Error
         {
         public:
@@ -704,41 +638,66 @@ namespace net
             {}
         };
 
-        explicit client_wrapper(const std::string &host, const std::string &port, const std::string& alias="")
-            : m_client(Protocol::make())
-            , m_host(host)
-            , m_port(port)
+        explicit client_wrapper(const std::string &phost, const std::string &pport, const std::string& alias="")
+            : shared_client(Protocol::make())
+            , client(*shared_client)
+            , host(phost)
+            , port(pport)
         {
             if (alias.empty())
             {
-                m_client->set_alias(std::string("'") + host + ":" + port + "'");
+                const std::string default_alias = fmt::format("client({}:{})", host, port);
+                client.set_alias(default_alias);
             }
             else
             {
-                m_client->set_alias(alias);
+                client.set_alias(alias);
             }
 
-            SPDLOG_INFO("Creating client wrapper for {}:{}, client: {}", m_host, m_port, m_client->get_alias());
+            SPDLOG_INFO("Creating client wrapper for {}:{}, client: {}", host, port, client.get_alias());
 
-            if (m_client->connect(host, port) == false)
+            if (client.connect(host, port) == false)
             {
-                const std::string error = fmt::format("Error connecting {}:{}, with client: {}", m_host, m_port, m_client->get_alias());
+                const std::string error = fmt::format("Error connecting {}:{}, with client: {}", host, port, client.get_alias());
                 throw Error(error);
             }
         }
 
         ~client_wrapper()
         {
-            SPDLOG_INFO("Destroying client wrapper for {}:{} with client: {}", m_host, m_port, m_client->get_alias());
-            if (m_client) {
-                m_client->disconnect();
-            }
-            SPDLOG_INFO("Destroyed client wrapper for {}:{} with client: {}", m_host, m_port, m_client->get_alias());
+            SPDLOG_INFO("Destroying client wrapper for {}:{} with client: {}", host, port, client.get_alias());
+            client.disconnect();
+            SPDLOG_INFO("Destroyed client wrapper for {}:{} with client: {}", host, port, client.get_alias());
         }
 
-        Protocol &client()
+        typename Protocol::shared_t as_shared()
         {
-            return *m_client;
+            return shared_client;
+        }
+
+        const typename Protocol::shared_t as_shared() const
+        {
+            return shared_client;
+        }
+
+        bool healthy() const
+        {
+            return client.healthy();
+        }
+
+        operator Protocol &()
+        {
+            return client;
+        }
+
+        operator const Protocol &() const
+        {
+            return client;
+        }
+
+        operator bool() const
+        {
+            return healthy();
         }
     };
 
