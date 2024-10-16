@@ -1,24 +1,15 @@
 #pragma once
 
-#include <boost/asio.hpp>
+#include <boost/asio/io_service.hpp>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/ip/udp.hpp>
+
 #include <boost/endian/conversion.hpp>
 #include <boost/system/error_code.hpp>
-#include <queue>
-#include <mutex>
-#include <condition_variable>
-#include <memory>
-#include <utility>
-#include <chrono>
-#include <optional>
-#include <vector>
-#include <atomic>
-#include <algorithm>
-#include <list>
-#include <thread>
 
 #include <spdlog/spdlog.h>
-
-#include <hl/silva/collections/threads/BasicPoolAsync>
+#include <hl/silva/collections/threads/basic_pool_async.hpp>
 
 namespace hl
 {
@@ -105,7 +96,7 @@ namespace net
         client_on_send_success_callback m_on_send_success;
 
         // callback thread pool
-        hl::silva::collections::threads::BasicPoolAsync m_callback_thread_pool;
+        hl::silva::collections::threads::basic_pool_async m_callback_thread_pool;
 
         // connection status
         std::atomic_bool m_connected;
@@ -508,7 +499,7 @@ namespace net
 
             if (!m_connected)
             {
-                SPDLOG_ERROR("Client already disconnected: {}", get_alias());
+                SPDLOG_WARN("Client already disconnected: {}", get_alias());
                 return false;
             }
 
@@ -544,7 +535,6 @@ namespace net
                 return false;
             }
 
-            SPDLOG_INFO("Sending {} bytes for client: {}", size, get_alias());
             if (!this->m_on_send(*this, *buffer, size))
             {
                 SPDLOG_ERROR("Error on send for client: {} with error: {}", get_alias(), "on_send returned false");
