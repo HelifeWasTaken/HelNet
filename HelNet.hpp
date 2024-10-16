@@ -750,7 +750,7 @@ namespace net
     // The buffer used in on_send_* is the same buffer that is sent
     // This means that the buffer is not copied but sent as a reference
     // Please keep this in mind
-    using client_on_send_callback               = std::function<bool(base_abstract_client_unwrapped& client, buffer_t& buffer_copy, const size_t& size)>;
+    using client_on_send_callback               = std::function<bool(base_abstract_client_unwrapped& client, buffer_t& buffer_copy, size_t& size)>;
     using client_on_send_error_callback         = std::function<void(base_abstract_client_unwrapped& client, const buffer_t& buffer_copy, const boost::system::error_code& ec, const size_t& sent_bytes)>;
     using client_on_send_success_callback       = std::function<void(base_abstract_client_unwrapped& client, const buffer_t& buffer_copy, const size_t& sent_bytes)>;
 
@@ -1077,7 +1077,7 @@ namespace net
                 SPDLOG_ERROR("Default callback on_receive_error for client: {} error: {} bytes: {}", client.get_alias(), ec.message(), bytes_transferred);
             });
 
-            set_on_send([](base_abstract_client_unwrapped& client, const buffer_t &, const size_t &size) {
+            set_on_send([](base_abstract_client_unwrapped& client, const buffer_t &, size_t &size) {
                 SPDLOG_INFO("Default callback on_send for client: {} bytes: {}, allowing by default send", client.get_alias(), size);
                 return true;
             });
@@ -1203,9 +1203,9 @@ namespace net
             return true;
         }
 
-        virtual bool send(shared_buffer_t &buffer, const size_t &size) override final
+        virtual bool send(shared_buffer_t &buffer, const size_t &defsize) override final
         {
-            SPDLOG_INFO("Sending {} bytes for client: {}", size, get_alias());
+            SPDLOG_INFO("Preparing to send {} bytes for client: {}", defsize, get_alias());
 
             if (!healthy())
             {
@@ -1213,6 +1213,7 @@ namespace net
                 return false;
             }
 
+            size_t size = defsize;
             if (!this->m_on_send(*this, *buffer, size))
             {
                 SPDLOG_ERROR("Error on send for client: {} with error: {}", get_alias(), "on_send returned false");
@@ -1223,6 +1224,8 @@ namespace net
                     this->m_on_send_error(*this, *buffer, ec, 0);
                 });
             }
+
+            SPDLOG_INFO("on_send callback validated: Sending {} bytes to the client: {}", size, get_alias());
 
             auto client = this->as_shared();
             const auto asio_send_callback = 
