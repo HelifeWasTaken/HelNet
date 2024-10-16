@@ -67,28 +67,28 @@ namespace net
         return std::make_shared<buffer_t>(data);
     }
 
-    class base_abstract_client;
+    class base_abstract_client_unwrapped;
 
-    using client_on_connect_callback            = std::function<void(base_abstract_client& client)>;
-    using client_on_connect_error_callback      = std::function<void(base_abstract_client& client, const boost::system::error_code& ec)>;
+    using client_on_connect_callback            = std::function<void(base_abstract_client_unwrapped& client)>;
+    using client_on_connect_error_callback      = std::function<void(base_abstract_client_unwrapped& client, const boost::system::error_code& ec)>;
 
-    using client_on_disconnect_callback         = std::function<void(base_abstract_client& client)>;
+    using client_on_disconnect_callback         = std::function<void(base_abstract_client_unwrapped& client)>;
 
     // on_receive_* sends a copy of the buffer
-    using client_on_receive_callback            = std::function<void(base_abstract_client& client, buffer_t& buffer_copy, const size_t& recv_bytes)>;
-    using client_on_receive_error_callback      = std::function<void(base_abstract_client& client, buffer_t& buffer_copy, const boost::system::error_code& ec, const size_t& recv_bytes)>;
+    using client_on_receive_callback            = std::function<void(base_abstract_client_unwrapped& client, buffer_t& buffer_copy, const size_t& recv_bytes)>;
+    using client_on_receive_error_callback      = std::function<void(base_abstract_client_unwrapped& client, buffer_t& buffer_copy, const boost::system::error_code& ec, const size_t& recv_bytes)>;
 
     // The buffer used in on_send_* is the same buffer that is sent
     // This means that the buffer is not copied but sent as a reference
     // Please keep this in mind
-    using client_on_send_callback               = std::function<bool(base_abstract_client& client, buffer_t& buffer_copy, const size_t& size)>;
-    using client_on_send_error_callback         = std::function<void(base_abstract_client& client, const buffer_t& buffer_copy, const boost::system::error_code& ec, const size_t& sent_bytes)>;
-    using client_on_send_success_callback       = std::function<void(base_abstract_client& client, const buffer_t& buffer_copy, const size_t& sent_bytes)>;
+    using client_on_send_callback               = std::function<bool(base_abstract_client_unwrapped& client, buffer_t& buffer_copy, const size_t& size)>;
+    using client_on_send_error_callback         = std::function<void(base_abstract_client_unwrapped& client, const buffer_t& buffer_copy, const boost::system::error_code& ec, const size_t& sent_bytes)>;
+    using client_on_send_success_callback       = std::function<void(base_abstract_client_unwrapped& client, const buffer_t& buffer_copy, const size_t& sent_bytes)>;
 
-    using shared_base_abstract_client = std::shared_ptr<base_abstract_client>;
+    using shared_base_abstract_client_unwrapped = std::shared_ptr<base_abstract_client_unwrapped>;
 
     // base client class
-    class base_abstract_client : public std::enable_shared_from_this<base_abstract_client>
+    class base_abstract_client_unwrapped : public std::enable_shared_from_this<base_abstract_client_unwrapped>
     {
     protected:
         // callbacks
@@ -118,7 +118,7 @@ namespace net
         std::string m_alias;
 
     public:
-        base_abstract_client()
+        base_abstract_client_unwrapped()
             : m_on_connect(nullptr)
             , m_on_connect_error(nullptr)
             , m_on_disconnect(nullptr)
@@ -135,7 +135,7 @@ namespace net
             , m_alias(fmt::format("{}", static_cast<void *>(this)))
         {}
 
-        virtual ~base_abstract_client() = default;
+        virtual ~base_abstract_client_unwrapped() = default;
 
         const std::string get_alias() const
         {
@@ -220,7 +220,7 @@ namespace net
             return m_receive_buffer;
         }
 
-        shared_base_abstract_client as_shared()
+        shared_base_abstract_client_unwrapped as_shared()
         {
             return shared_from_this();
         }
@@ -271,12 +271,11 @@ namespace net
         }
     };
 
-    // TCP client class
     template<class Protocol>
-    class base_client : public base_abstract_client
+    class base_client_unwrapped : public base_abstract_client_unwrapped
     {
     public:
-        using shared_t = std::shared_ptr<base_client<Protocol>>;
+        using shared_t = std::shared_ptr<base_client_unwrapped<Protocol>>;
 
         struct connection_data 
         {
@@ -300,14 +299,14 @@ namespace net
         };
 
     private:
-        using base_abstract_client::m_on_connect;
-        using base_abstract_client::m_on_connect_error;
-        using base_abstract_client::m_on_disconnect;
-        using base_abstract_client::m_on_receive;
-        using base_abstract_client::m_on_receive_error;
-        using base_abstract_client::m_on_send;
-        using base_abstract_client::m_on_send_error;
-        using base_abstract_client::m_on_send_success;
+        using base_abstract_client_unwrapped::m_on_connect;
+        using base_abstract_client_unwrapped::m_on_connect_error;
+        using base_abstract_client_unwrapped::m_on_disconnect;
+        using base_abstract_client_unwrapped::m_on_receive;
+        using base_abstract_client_unwrapped::m_on_receive_error;
+        using base_abstract_client_unwrapped::m_on_send;
+        using base_abstract_client_unwrapped::m_on_send_error;
+        using base_abstract_client_unwrapped::m_on_send_success;
 
     private:
 
@@ -385,58 +384,58 @@ namespace net
             );
         }
 
-        base_client()
+        base_client_unwrapped()
         {
-            SPDLOG_INFO("Creating base_client: {}", get_alias());
+            SPDLOG_INFO("Creating base_client_unwrapped: {}", get_alias());
 
-            set_on_connect([](base_abstract_client& client) {
+            set_on_connect([](base_abstract_client_unwrapped& client) {
                 SPDLOG_INFO("Default callback on_connect for client: {}", client.get_alias());
             });
 
-            set_on_connect_error([](base_abstract_client& client, const boost::system::error_code &ec) {
+            set_on_connect_error([](base_abstract_client_unwrapped& client, const boost::system::error_code &ec) {
                 SPDLOG_ERROR("Default callback on_connect_error for client: {} with error: {}", client.get_alias(), ec.message());
             });
 
-            set_on_disconnect([](base_abstract_client& client) {
+            set_on_disconnect([](base_abstract_client_unwrapped& client) {
                 SPDLOG_INFO("Default callback on_disconnect for client: {}", client.get_alias());
             });
 
-            set_on_receive([](base_abstract_client& client, const buffer_t &, const size_t &bytes_transferred) {
+            set_on_receive([](base_abstract_client_unwrapped& client, const buffer_t &, const size_t &bytes_transferred) {
                 SPDLOG_INFO("Default callback on_receive for client: {} with {} bytes", client.get_alias(), bytes_transferred);
             });
 
-            set_on_receive_error([](base_abstract_client& client, const buffer_t &, const boost::system::error_code &ec, const size_t &bytes_transferred) {
+            set_on_receive_error([](base_abstract_client_unwrapped& client, const buffer_t &, const boost::system::error_code &ec, const size_t &bytes_transferred) {
                 SPDLOG_ERROR("Default callback on_receive_error for client: {} error: {} bytes: {}", client.get_alias(), ec.message(), bytes_transferred);
             });
 
-            set_on_send([](base_abstract_client& client, const buffer_t &, const size_t &size) {
+            set_on_send([](base_abstract_client_unwrapped& client, const buffer_t &, const size_t &size) {
                 SPDLOG_INFO("Default callback on_send for client: {} bytes: {}, allowing by default send", client.get_alias(), size);
                 return true;
             });
 
-            set_on_send_error([](base_abstract_client& client, const buffer_t &, const boost::system::error_code &ec, const size_t& bytes_transferred) {
+            set_on_send_error([](base_abstract_client_unwrapped& client, const buffer_t &, const boost::system::error_code &ec, const size_t& bytes_transferred) {
                 SPDLOG_ERROR("Default callback on_send_error for client: {} error: {} bytes: {}", client.get_alias(), ec.message(), bytes_transferred);
             });
 
-            set_on_send_success([](base_abstract_client& client, const buffer_t &, const size_t& bytes_transferred) {
+            set_on_send_success([](base_abstract_client_unwrapped& client, const buffer_t &, const size_t& bytes_transferred) {
                 SPDLOG_INFO("Default on_send_success for client: {} with {} bytes", client.get_alias(), bytes_transferred);
             });
 
-            SPDLOG_INFO("Created base_client: {}", get_alias());
+            SPDLOG_INFO("Created base_client_unwrapped: {}", get_alias());
         }
 
     public:
 
         static shared_t make()
         {
-            return std::shared_ptr<base_client>(new base_client());
+            return std::shared_ptr<base_client_unwrapped>(new base_client_unwrapped());
         }
 
-        virtual ~base_client() override
+        virtual ~base_client_unwrapped() override
         {
-            SPDLOG_INFO("Destroying base_client: {}", get_alias());
+            SPDLOG_INFO("Destroying base_client_unwrapped: {}", get_alias());
             disconnect();
-            SPDLOG_INFO("Destroyed base_client: {}", get_alias());
+            SPDLOG_INFO("Destroyed base_client_unwrapped: {}", get_alias());
         }
 
         virtual bool connect(const std::string &host, const std::string &port) override final
@@ -616,19 +615,18 @@ namespace net
         
     };
 
-    using tcp_client = base_client<boost::asio::ip::tcp>;
-    using udp_client = base_client<boost::asio::ip::udp>;
+    using tcp_client_unwrapped = base_client_unwrapped<boost::asio::ip::tcp>;
+    using udp_client_unwrapped = base_client_unwrapped<boost::asio::ip::udp>;
 
     template<class Protocol>
     class client_wrapper
     {
     private:
-        typename Protocol::shared_t shared_client;
+        typename Protocol::shared_t m_shared_client;
+        Protocol &m_client;
 
     public:
-        Protocol &client;
-        const std::string host;
-        const std::string port;
+
 
         class Error : public hl::net::Error
         {
@@ -638,61 +636,152 @@ namespace net
             {}
         };
 
-        explicit client_wrapper(const std::string &phost, const std::string &pport, const std::string& alias="")
-            : shared_client(Protocol::make())
-            , client(*shared_client)
-            , host(phost)
-            , port(pport)
+        explicit client_wrapper()
+            : m_shared_client(Protocol::make())
+            , m_client(*m_shared_client)
         {
-            if (alias.empty())
-            {
-                const std::string default_alias = fmt::format("client({}:{})", host, port);
-                client.set_alias(default_alias);
-            }
-            else
-            {
-                client.set_alias(alias);
-            }
-
-            SPDLOG_INFO("Creating client wrapper for {}:{}, client: {}", host, port, client.get_alias());
-
-            if (client.connect(host, port) == false)
-            {
-                const std::string error = fmt::format("Error connecting {}:{}, with client: {}", host, port, client.get_alias());
-                throw Error(error);
-            }
+            SPDLOG_INFO("Creating client wrapper for: {}", get_alias());
         }
 
         ~client_wrapper()
         {
-            SPDLOG_INFO("Destroying client wrapper for {}:{} with client: {}", host, port, client.get_alias());
-            client.disconnect();
-            SPDLOG_INFO("Destroyed client wrapper for {}:{} with client: {}", host, port, client.get_alias());
+            SPDLOG_INFO("Destroying client wrapper for client: {}", get_alias());
+            if (connected()) {
+                disconnect();
+            }
+            SPDLOG_INFO("Destroyed client wrapper for client: {}", get_alias());
         }
 
-        typename Protocol::shared_t as_shared()
+        // API Reproduction
+
+        const std::string get_alias() const
         {
-            return shared_client;
+            return m_client.get_alias();
         }
 
-        const typename Protocol::shared_t as_shared() const
+        void set_alias(const std::string &alias)
         {
-            return shared_client;
+            m_client.set_alias(alias);
+        }
+
+        void set_on_connect(const client_on_connect_callback &callback)
+        {
+            m_client.set_on_connect(callback);
+        }
+
+        void set_on_connect_error(const client_on_connect_error_callback &callback)
+        {
+            m_client.set_on_connect_error(callback);
+        }
+
+        void set_on_disconnect(const client_on_disconnect_callback &callback)
+        {
+            m_client.set_on_disconnect(callback);
+        }
+
+        void set_on_receive(const client_on_receive_callback &callback)
+        {
+            m_client.set_on_receive(callback);
+        }
+
+        void set_on_receive_error(const client_on_receive_error_callback &callback)
+        {
+            m_client.set_on_receive_error(callback);
+        }
+
+        void set_on_send(const client_on_send_callback &callback)
+        {
+            m_client.set_on_send(callback);
+        }
+
+        void set_on_send_error(const client_on_send_error_callback &callback)
+        {
+            m_client.set_on_send_error(callback);
+        }
+
+        void set_on_send_success(const client_on_send_success_callback &callback)
+        {
+            m_client.set_on_send_success(callback);
+        }
+
+        bool connected() const
+        {
+            return m_client.connected();
         }
 
         bool healthy() const
         {
-            return client.healthy();
+            return m_client.healthy();
         }
 
-        operator Protocol &()
+        shared_buffer_t &receive_buffer()
         {
-            return client;
+            return m_client.receive_buffer();
         }
 
-        operator const Protocol &() const
+        const shared_buffer_t &receive_buffer() const
         {
-            return client;
+            return m_client.receive_buffer();
+        }
+
+        bool callbacks_are_non_null()
+        {
+            return m_client.callbacks_are_non_null();
+        }
+
+        bool connect(const std::string &host, const std::string &port, bool auto_alias = true)
+        {
+            if (auto_alias) {
+                set_alias(fmt::format("client({}, {}:{})", static_cast<void*>(this), host, port));
+            }
+            return m_client.connect(host, port);
+        }
+
+        bool disconnect()
+        {
+            return m_client.disconnect();
+        }
+
+        bool send(shared_buffer_t &buffer, const size_t &size)
+        {
+            return m_client.send(buffer, size);
+        }
+
+        bool send(shared_buffer_t &buffer)
+        {
+            return m_client.send(buffer);
+        }
+
+        bool send_bytes(const void *data, const size_t &size)
+        {
+            return m_client.send_bytes(data, size);
+        }
+
+        bool send_string(const std::string &str)
+        {
+            return m_client.send_string(str);
+        }
+
+        template<typename T>
+        bool send_vec(const std::vector<T> &data)
+        {
+            return m_client.send_vec(data);
+        }
+
+        template<typename T>
+        bool send_vec(const std::vector<T> &data, const size_t& size)
+        {
+            return m_client.send_vec(data, size);
+        }
+
+        typename Protocol::shared_t client_as_shared()
+        {
+            return m_shared_client;
+        }
+
+        const typename Protocol::shared_t client_as_shared() const
+        {
+            return m_shared_client;
         }
 
         operator bool() const
@@ -701,7 +790,7 @@ namespace net
         }
     };
 
-    using tcp_client_wrapper = client_wrapper<tcp_client>;
-    using udp_client_wrapper = client_wrapper<udp_client>;
+    using tcp_client = client_wrapper<tcp_client_unwrapped>;
+    using udp_client = client_wrapper<udp_client_unwrapped>;
 }
 }
