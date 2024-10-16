@@ -5,7 +5,7 @@ Multithreaded utilities using boost::asio and modern C++ for client/server apps 
 ## Example of TCP Client
 
 ```cpp
-#include "HelNet"
+#include "HelNet.hpp"
 
 int main(int argc, char **argv)
 {
@@ -27,7 +27,7 @@ int main(int argc, char **argv)
 ## Example of UDP Client
 
 ```cpp
-#include "HelNet"
+#include "HelNet.hpp"
 
 int main(int argc, char **argv)
 {
@@ -49,7 +49,7 @@ int main(int argc, char **argv)
 ## Client Interoperability
 
 ```cpp
-#include "HelNet"
+#include "HelNet.hpp"
 
 template<typename Protocol>
 int hello_world_client(char const *host, char const *port)
