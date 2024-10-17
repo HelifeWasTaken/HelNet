@@ -689,13 +689,22 @@
 #include <spdlog/spdlog.h>
 #include <hl/silva/collections/threads/basic_pool_async.hpp>
 
+#include <unordered_map>
+
+// TODO: Logging for all callbacks set and call / call error
+
 namespace hl
 {
 namespace net
 {
+
+#ifndef HL_NET_BUFFER_SIZE
+#define HL_NET_BUFFER_SIZE 1024
+#endif
+
     using byte = uint8_t;
 
-    using buffer_t = std::array<byte, 1024>;
+    using buffer_t = std::array<byte, HL_NET_BUFFER_SIZE>;
     using shared_buffer_t = std::shared_ptr<buffer_t>;
 
     static inline shared_buffer_t make_shared_buffer()
@@ -745,7 +754,7 @@ namespace net
 
     using shared_base_abstract_client_unwrapped = std::shared_ptr<base_abstract_client_unwrapped>;
 
-    class client_callback_register
+    class client_callback_register : public hl::silva::collections::meta::NonCopyMoveable
     {
     private:
         base_abstract_client_unwrapped& m_client_ref;
@@ -778,12 +787,16 @@ namespace net
     public:
         void start_pool(void)
         {
+            SPDLOG_INFO("Starting pool for client callback register");
             m_pool.start();
+            SPDLOG_INFO("Pool started for client callback register");
         }
 
         void stop_pool(void)
         {
+            SPDLOG_INFO("Stopping pool for client callback register");
             m_pool.stop();
+            SPDLOG_INFO("Pool stopped for client callback register");
         }
 
         void on_connect(void)
@@ -1016,10 +1029,22 @@ namespace net
             , m_on_send_error_is_async(false)
             , m_mutex()
         {}
+
+        ~client_callback_register()
+        {
+            // TODO
+            // SPDLOG_INFO("Destroying client_callback_register for client: {}", m_client_ref.get_alias());
+            stop_pool();
+            // SPDLOG_INFO("Destroyed client_callback_register for client: {}", m_client_ref.get_alias());
+        }
+
+        client_callback_register(const client_callback_register&) = delete;
+        client_callback_register& operator=(const client_callback_register&) = delete;
+        client_callback_register(client_callback_register&&) = delete;
     };
 
     // base client class
-    class base_abstract_client_unwrapped : public std::enable_shared_from_this<base_abstract_client_unwrapped>
+    class base_abstract_client_unwrapped : public std::enable_shared_from_this<base_abstract_client_unwrapped>, public hl::silva::collections::meta::NonCopyMoveable
     {
     public:
         virtual bool connect(const std::string &host, const std::string &port) = 0;
@@ -1054,9 +1079,14 @@ namespace net
             , m_healthy(false)
             , m_receive_buffer(make_shared_buffer())
             , m_alias_mutex()
-            , m_alias(fmt::format("{}", static_cast<void *>(this)))
+            , m_alias(fmt::format("base_abstract_client_unwrapped({})", static_cast<void *>(this)))
             , m_callback_register(*this)
         {}
+
+        base_abstract_client_unwrapped(const base_abstract_client_unwrapped &) = delete;
+        base_abstract_client_unwrapped &operator=(const base_abstract_client_unwrapped &) = delete;
+        base_abstract_client_unwrapped(base_abstract_client_unwrapped &&) = delete;
+        base_abstract_client_unwrapped &operator=(base_abstract_client_unwrapped &&) = delete;
 
     private:
         void _cleanup()
@@ -1138,12 +1168,6 @@ namespace net
         {
             return send_bytes(static_cast<const void *>(data.data()), data.size() * sizeof(T));
         }
-
-        template<typename T>
-        bool send_vec(const std::vector<T> &data, const size_t size)
-        {
-            return send_bytes(static_cast<const void *>(data.data()), std::min(size, data.size()) * sizeof(T));
-        }
     };
 
     template<class Protocol>
@@ -1152,8 +1176,9 @@ namespace net
     public:
         using shared_t = std::shared_ptr<base_client_unwrapped<Protocol>>;
 
-        struct connection_data 
+        class connection_data 
         {
+        public:
             boost::asio::io_service io_service;
             std::thread io_service_thread;
 
@@ -1169,6 +1194,12 @@ namespace net
                 , socket(io_service)
             {
             }
+
+            connection_data() = delete;
+            connection_data(const connection_data &) = delete;
+            connection_data &operator=(const connection_data &) = delete;
+            connection_data(connection_data &&) = delete;
+            connection_data &operator=(connection_data &&) = delete;
 
             ~connection_data() = default;
         };
@@ -1245,6 +1276,10 @@ namespace net
         }
 
     public:
+        base_client_unwrapped(const base_client_unwrapped &) = delete;
+        base_client_unwrapped &operator=(const base_client_unwrapped &) = delete;
+        base_client_unwrapped(base_client_unwrapped &&) = delete;
+        base_client_unwrapped &operator=(base_client_unwrapped &&) = delete;
 
         static shared_t make()
         {
@@ -1419,7 +1454,7 @@ namespace net
     using udp_client_unwrapped = base_client_unwrapped<boost::asio::ip::udp>;
 
     template<class Protocol>
-    class client_wrapper
+    class client_wrapper : public hl::silva::collections::meta::NonCopyMoveable
     {
     private:
         typename Protocol::shared_t m_shared_client;
@@ -1443,6 +1478,11 @@ namespace net
             callbacks_register.set_on_sent([](base_abstract_client_unwrapped& client, const size_t sent_bytes) { SPDLOG_INFO("Client sent: {} - {}", client.get_alias(), sent_bytes); });
             callbacks_register.set_on_send_error([](base_abstract_client_unwrapped& client, const boost::system::error_code ec, const size_t sent_bytes) { SPDLOG_ERROR("Client send error: {} - {} - {}", client.get_alias(), ec.message(), sent_bytes); });
         }
+
+        client_wrapper(const client_wrapper&) = delete;
+        client_wrapper& operator=(const client_wrapper&) = delete;
+        client_wrapper(client_wrapper&&) = delete;
+        client_wrapper& operator=(client_wrapper&&) = delete;
 
         ~client_wrapper()
         {
@@ -1519,12 +1559,6 @@ namespace net
             return m_client.send_vec(data);
         }
 
-        template<typename T>
-        bool send_vec(const std::vector<T> &data, const size_t size)
-        {
-            return m_client.send_vec(data, size);
-        }
-
         operator bool() const
         {
             return healthy();
@@ -1541,7 +1575,8 @@ namespace net
     using shared_abstract_connection = std::shared_ptr<base_abstract_connection_unwrapped>;
 
     using client_id_t = std::uint64_t;
-    static constexpr client_id_t invalid_client_id = std::numeric_limits<client_id_t>::max();
+    static constexpr client_id_t invalid_client_id  = std::numeric_limits<client_id_t>::min();
+    static constexpr client_id_t base_client_id     = invalid_client_id + 1;
 
     using server_start_success_callback             = std::function<void(base_abstract_server_unwrapped& server)>;
     using server_start_error_callback               = std::function<void(base_abstract_server_unwrapped& server, const boost::system::error_code ec)>;
@@ -1559,7 +1594,7 @@ namespace net
     using server_on_receive_success_callback        = std::function<void(base_abstract_server_unwrapped& server, shared_abstract_connection client, shared_buffer_t buffer_copy, const size_t recv_bytes)>;
     using server_on_receive_error_callback          = std::function<void(base_abstract_server_unwrapped& server, shared_abstract_connection client, shared_buffer_t buffer_copy, const boost::system::error_code ec, const size_t recv_bytes)>;
 
-    class server_callback_register
+    class server_callback_register : public hl::silva::collections::meta::NonCopyMoveable
     {
     private:
         base_abstract_server_unwrapped& m_server_ref;
@@ -1580,6 +1615,9 @@ namespace net
 
         server_on_connection_callback       m_on_connection_callback;
         bool                                m_on_connection_is_async;
+
+        server_on_connection_error_callback m_on_connection_error_callback;
+        bool                                m_on_connection_error_is_async;
 
         server_on_sent_callback             m_on_sent_callback;
         bool                                m_on_sent_is_async;
@@ -1759,6 +1797,36 @@ namespace net
             m_on_connection_is_async = async;
         }
 
+        void on_connection_error(const boost::system::error_code ec)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+
+            if (m_on_connection_error_callback == nullptr)
+            {
+                return;
+            }
+            else if (m_on_connection_error_is_async)
+            {
+                m_pool.push([this, ec]() { m_on_connection_error_callback(m_server_ref, ec); });
+            }
+            else
+            {
+                m_on_connection_error_callback(m_server_ref, ec);
+            }
+        }
+
+        void set_on_connection_error(const server_on_connection_error_callback& on_connection_error_callback)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_connection_error_callback = on_connection_error_callback;
+        }
+
+        void set_on_connection_error_async(bool async)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_connection_error_is_async = async;
+        }
+
         void on_sent(shared_abstract_connection& client, const size_t sent_bytes)
         {
             std::lock_guard<std::mutex> lock(m_mutex);
@@ -1923,6 +1991,8 @@ namespace net
             , m_on_stop_error_is_async(false)
             , m_on_connection_callback(nullptr)
             , m_on_connection_is_async(false)
+            , m_on_connection_error_callback(nullptr)
+            , m_on_connection_error_is_async(false)
             , m_on_sent_callback(nullptr)
             , m_on_sent_is_async(false)
             , m_on_send_error_callback(nullptr)
@@ -1934,10 +2004,27 @@ namespace net
             , m_on_receive_success_callback(nullptr)
             , m_on_receive_success_is_async(false)
             , m_mutex()
-        {}
+        {
+            // TODO
+            // Incomplete type... for server ref here
+            // SPDLOG_INFO("Creating server callback register for server: {}", m_server_ref.get_alias());
+        }
+
+        ~server_callback_register()
+        {
+            // TODO
+            // Incomplete type... for server ref here
+            // SPDLOG_INFO("Destroying server callback register for server: {}", m_server_ref.get_alias());
+            stop_pool();
+        }
+
+        server_callback_register(const server_callback_register&) = delete;
+        server_callback_register& operator=(const server_callback_register&) = delete;
+        server_callback_register(server_callback_register&&) = delete;
+        server_callback_register& operator=(server_callback_register&&) = delete;
     };
 
-    class base_abstract_connection_unwrapped : public std::enable_shared_from_this<base_abstract_connection_unwrapped>
+    class base_abstract_connection_unwrapped : public std::enable_shared_from_this<base_abstract_connection_unwrapped>, public hl::silva::collections::meta::NonCopyMoveable
     {
     public:
         virtual void stop() = 0;
@@ -2001,11 +2088,6 @@ namespace net
             return get_id() != invalid_client_id;
         }
 
-        void set_connect_status(const bool status)
-        {
-            m_running = status;
-        }
-
         inline bool is_running() const
         {
             return m_running && connected();
@@ -2039,7 +2121,7 @@ namespace net
         base_abstract_connection_unwrapped(server_callback_register &callback_register)
             : m_callback_register(callback_register)
             , m_receive_buffer(make_shared_buffer())
-            , m_alias("no-name")
+            , m_alias(spdlog::fmt_lib::format("base_abstract_connection_unwrapped({})", static_cast<void*>(this)))
             , m_alias_mutex()
             , m_id(invalid_client_id)
             , m_healthy(false)
@@ -2047,6 +2129,11 @@ namespace net
         {
             SPDLOG_INFO("Creating base_abstract_connection_unwrapped: {}", get_alias());
         }
+
+        base_abstract_connection_unwrapped(const base_abstract_connection_unwrapped&) = delete;
+        base_abstract_connection_unwrapped& operator=(const base_abstract_connection_unwrapped&) = delete;
+        base_abstract_connection_unwrapped(base_abstract_connection_unwrapped&&) = delete;
+        base_abstract_connection_unwrapped& operator=(base_abstract_connection_unwrapped&&) = delete;
 
         virtual ~base_abstract_connection_unwrapped()
         {
@@ -2059,6 +2146,9 @@ namespace net
     template<class Protocol>
     class base_connection_unwrapped : public base_abstract_connection_unwrapped
     {
+    public:
+        using shared_t = std::shared_ptr<base_connection_unwrapped<Protocol>>;
+
     private:
         typename Protocol::socket m_socket;
 
@@ -2135,7 +2225,15 @@ namespace net
             _receive_async();
         }
 
-        virtual ~base_connection_unwrapped() = default;
+        base_connection_unwrapped(const base_connection_unwrapped&) = delete;
+        base_connection_unwrapped& operator=(const base_connection_unwrapped&) = delete;
+        base_connection_unwrapped(base_connection_unwrapped&&) = delete;
+        base_connection_unwrapped& operator=(base_connection_unwrapped&&) = delete;
+
+        virtual ~base_connection_unwrapped() override
+        {
+            SPDLOG_INFO("Destroying shared_abstract_connection: {}", get_id());
+        }
 
         void stop() override final
         {
@@ -2223,7 +2321,7 @@ namespace net
 
     using shared_base_abstract_server_unwrapped = std::shared_ptr<base_abstract_server_unwrapped>;
 
-    class base_abstract_server_unwrapped : public std::enable_shared_from_this<base_abstract_server_unwrapped>
+    class base_abstract_server_unwrapped : public std::enable_shared_from_this<base_abstract_server_unwrapped>, public hl::silva::collections::meta::NonCopyMoveable
     {
     private:
         server_callback_register m_callback_register;
@@ -2253,17 +2351,29 @@ namespace net
 
     public:
         virtual bool start(const std::string &host, const std::string &port) = 0;
-        virtual void stop() = 0;
+        virtual bool stop() = 0;
         virtual bool send(const client_id_t& client_id, const shared_buffer_t &buffer, const size_t &size) = 0;
+        virtual bool disconnect(const client_id_t& client_id) = 0;
 
         base_abstract_server_unwrapped()
             : m_callback_register(*this)
-            , m_alias("no-name")
+            , m_alias(spdlog::fmt_lib::format("base_abstract_server_unwrapped({})", static_cast<void*>(this)))
             , m_alias_mutex()
         {
             SPDLOG_INFO("Creating base_abstract_server_unwrapped: {}", get_alias());
         }
-    
+
+        base_abstract_server_unwrapped(const base_abstract_server_unwrapped&) = delete;
+        base_abstract_server_unwrapped& operator=(const base_abstract_server_unwrapped&) = delete;
+        base_abstract_server_unwrapped(base_abstract_server_unwrapped&&) = delete;
+        base_abstract_server_unwrapped& operator=(base_abstract_server_unwrapped&&) = delete;
+
+        ~base_abstract_server_unwrapped()
+        {
+            SPDLOG_INFO("Destroying base_abstract_server_unwrapped: {}", get_alias());
+        }
+
+
     public:
         bool send(const client_id_t& client_id, const shared_buffer_t &buffer)
         {
@@ -2290,14 +2400,293 @@ namespace net
         {
             return send_bytes(static_cast<const void *>(data.data()), data.size() * sizeof(T));
         }
+    };
 
-        template<typename T>
-        bool send_vec(const std::vector<T> &data, const size_t size)
+    template<class Protocol>
+    class base_server_unwrapped : public base_abstract_server_unwrapped
+    {
+    public:
+        using connection_t = base_connection_unwrapped<Protocol>;
+        using connection_shared_t = typename connection_t::shared_t;
+        using shared_t = std::shared_ptr<base_server_unwrapped<Protocol>>;
+
+    private:
+        typename Protocol::acceptor m_acceptor;
+        boost::asio::io_service m_io_service;
+
+        std::atomic<client_id_t> m_last_id;
+        std::unordered_map<client_id_t, connection_shared_t> m_connections;
+        std::mutex m_connections_mutex;
+
+        std::atomic_bool m_running;
+
+        void _accept_async()
         {
-            return send_bytes(static_cast<const void *>(data.data()), size * sizeof(T));
+            auto connection = std::make_shared<base_connection_unwrapped<Protocol>>(m_io_service, callbacks());
+            m_acceptor.async_accept(
+                connection->m_socket,
+                [this, connection](const boost::system::error_code &ec)
+                {
+                    if (ec)
+                    {
+                        SPDLOG_ERROR("Error on accept for server: {} with error: {}", get_alias(), ec.message());
+                        callbacks().on_connection_error(ec);
+                    }
+                    else
+                    {
+                        auto &cref = *connection;
+
+                        SPDLOG_INFO("Accepted connection for server: {}", get_alias());
+
+                        cref->set_id(m_last_id++);
+                        cref->set_alias(spdlog::fmt_lib::format("connection({}, {})", get_alias(), cref.get_id()));
+
+                        {
+                            std::lock_guard<std::mutex> lock(m_connections_mutex);
+                            m_connections.emplace(cref.get_id(), connection);
+                        }
+
+                        callbacks().on_connection(connection);
+                    }
+                    _accept_async();
+                }
+            );
         }
 
-        virtual ~base_abstract_server_unwrapped() = default;
+        connection_shared_t _get_connection(const client_id_t& client_id)
+        {
+            std::lock_guard<std::mutex> lock(m_connections_mutex);
+            auto it = m_connections.find(client_id);
+            if (it == m_connections.end())
+            {
+                SPDLOG_ERROR("Connection not found for client: {}", client_id);
+                return nullptr;
+            }
+            return it->second;
+        }
+
+        base_server_unwrapped()
+            : base_abstract_server_unwrapped()
+            , m_acceptor(m_io_service)
+            , m_io_service()
+            , m_last_id(base_client_id)
+            , m_connections()
+            , m_connections_mutex()
+            , m_running(false)
+        {
+            SPDLOG_INFO("Creating base_server_unwrapped: {}", get_alias());
+        }
+
+    public:
+        base_server_unwrapped(const base_server_unwrapped&) = delete;
+        base_server_unwrapped& operator=(const base_server_unwrapped&) = delete;
+        base_server_unwrapped(base_server_unwrapped&&) = delete;
+        base_server_unwrapped& operator=(base_server_unwrapped&&) = delete;
+
+        shared_t make()
+        {
+            return std::make_shared<base_server_unwrapped<Protocol>>();
+        }
+
+        virtual ~base_server_unwrapped()
+        {
+            SPDLOG_INFO("Destroying base_server_unwrapped: {}", get_alias());
+        }
+
+        bool start(const std::string &host, const std::string &port) override final
+        {
+            SPDLOG_INFO("Starting server: {} on {}:{}", get_alias(), host, port);
+
+            if (m_running == true)
+            {
+                SPDLOG_ERROR("Server already started: {}", get_alias());
+                return false;
+            }
+
+            m_running = true;
+
+            boost::asio::ip::tcp::resolver resolver(m_io_service);
+            boost::asio::ip::tcp::resolver::query query(host, port);
+            boost::asio::ip::tcp::endpoint endpoint = *resolver.resolve(query);
+
+            m_acceptor.open(endpoint.protocol());
+            m_acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
+            m_acceptor.bind(endpoint);
+            m_acceptor.listen();
+
+            m_last_id = base_client_id;
+
+            {
+                std::lock_guard<std::mutex> lock(m_connections_mutex);
+                m_connections.clear();
+            }
+
+            callbacks().start_pool();
+            _accept_async();
+
+            callbacks().on_start_success();
+
+            SPDLOG_INFO("Started server: {} on {}:{}", get_alias(), host, port);
+            return true;
+        }
+
+        bool stop() override final
+        {
+            SPDLOG_INFO("Stopping server: {}", get_alias());
+
+            if (m_running == false)
+            {
+                SPDLOG_WARN("Server already stopped: {}", get_alias());
+                return false;
+            }
+
+            m_acceptor.close();
+            m_io_service.stop();
+
+            // for (auto &connection : m_connections) { connection.second->stop(); }
+            m_connections.clear();
+            m_last_id = base_client_id;
+
+            auto callback_register = this->callbacks();
+            callback_register.on_stop_success();
+            callback_register.stop_pool();
+
+            m_running = false;
+
+            SPDLOG_INFO("Stopped server: {}", get_alias());
+            return true;
+        }
+
+        bool send(const client_id_t& client_id, const shared_buffer_t &buffer, const size_t &size) override final
+        {
+            SPDLOG_INFO("Sending {} bytes to client: {} from server: {}", size, client_id, get_alias());
+
+            auto connection = _get_connection(client_id);
+            if (!connection)
+            {
+                SPDLOG_ERROR("Cannot send data to a non-existing connection: {} from server: {}", client_id, get_alias());
+                return false;
+            }
+            return connection->send(buffer, size);
+        }
+
+        bool disconnect(const client_id_t& client_id) override final
+        {
+            if (!m_running)
+            {
+                SPDLOG_WARN("Cannot disconnect client: {} from a non-running server: {}", client_id, get_alias());
+                return false;
+            }
+
+            SPDLOG_INFO("Disconnecting client: {} from server: {}", client_id, get_alias());
+
+            auto connection = _get_connection(client_id);
+            if (!connection)
+            {
+                SPDLOG_ERROR("Cannot disconnect a non-existing connection: {} from server: {}", client_id, get_alias());
+                return false;
+            }
+            // connection->stop();
+            m_connections.erase(client_id);
+
+            SPDLOG_INFO("Disconnected client: {} from server: {}", client_id, get_alias());
+            return true;
+        }
     };
+
+    using base_tcp_server_unwrapped = base_server_unwrapped<boost::asio::ip::tcp>;
+    using base_udp_server_unwrapped = base_server_unwrapped<boost::asio::ip::udp>;
+
+    template<class Protocol>
+    class server_wrapper : public hl::silva::collections::meta::NonCopyMoveable
+    {
+    private:
+        typename Protocol::shared_t m_shared_server;
+        Protocol &m_server;
+    
+    public:
+        server_wrapper()
+            : m_shared_server(Protocol::make())
+            , m_server(*m_shared_server)
+        {
+            SPDLOG_INFO("Creating server wrapper for server: {}", m_server.get_alias());
+            m_server.callbacks().set_on_start_success([](base_abstract_server_unwrapped& server) { SPDLOG_INFO("Server started: {}", server.get_alias()); });
+            m_server.callbacks().set_on_start_error([](base_abstract_server_unwrapped& server, const boost::system::error_code ec) { SPDLOG_ERROR("Server start error: {} - {}", server.get_alias(), ec.message()); });
+            m_server.callbacks().set_on_stop_success([](base_abstract_server_unwrapped& server) { SPDLOG_INFO("Server stopped: {}", server.get_alias()); });
+            m_server.callbacks().set_on_stop_error([](base_abstract_server_unwrapped& server, const boost::system::error_code ec) { SPDLOG_ERROR("Server stop error: {} - {}", server.get_alias(), ec.message()); });
+            m_server.callbacks().set_on_connection([](base_abstract_server_unwrapped& server, shared_abstract_connection client) { SPDLOG_INFO("Server accepted connection: {} - {}", server.get_alias(), client->get_alias()); });
+            m_server.callbacks().set_on_connection_error([](base_abstract_server_unwrapped& server, const boost::system::error_code ec) { SPDLOG_ERROR("Server connection error: {} - {}", server.get_alias(), ec.message()); });
+            m_server.callbacks().set_on_sent([](base_abstract_server_unwrapped& server, shared_abstract_connection client, const size_t sent_bytes) { SPDLOG_INFO("Server sent: {} - {} - {}", server.get_alias(), client->get_alias(), sent_bytes); });
+            m_server.callbacks().set_on_send_error([](base_abstract_server_unwrapped& server, shared_abstract_connection client, const boost::system::error_code ec, const size_t sent_bytes) { SPDLOG_ERROR("Server send error: {} - {} - {} - {}", server.get_alias(), client->get_alias(), ec.message(), sent_bytes); });
+            m_server.callbacks().set_on_receive([](base_abstract_server_unwrapped& server, shared_abstract_connection client, shared_buffer_t buffer_copy, const size_t recv_bytes) { SPDLOG_INFO("Server received: {} - {} - {}", server.get_alias(), client->get_alias(), recv_bytes); });
+            m_server.callbacks().set_on_receive_error([](base_abstract_server_unwrapped& server, shared_abstract_connection client, shared_buffer_t buffer_copy, const boost::system::error_code ec, const size_t recv_bytes) { SPDLOG_ERROR("Server receive error: {} - {} - {} - {} - {}", server.get_alias(), client->get_alias(), ec.message(), buffer_copy->size(), recv_bytes); });
+            m_server.callbacks().set_on_receive_success([](base_abstract_server_unwrapped& server, shared_abstract_connection client, shared_buffer_t buffer_copy, const size_t recv_bytes) { SPDLOG_INFO("Server received: {} - {} - {}", server.get_alias(), client->get_alias(), recv_bytes); });
+        }
+
+        server_wrapper(const server_wrapper&) = delete;
+        server_wrapper& operator=(const server_wrapper&) = delete;
+        server_wrapper(server_wrapper&&) = delete;
+        server_wrapper& operator=(server_wrapper&&) = delete;
+
+        ~server_wrapper()
+        {
+            SPDLOG_INFO("Destroying server wrapper for server: {}", m_server.get_alias());
+        }
+
+        server_callback_register& callbacks()
+        {
+            return m_server.callbacks();
+        }
+
+        std::string get_alias() const
+        {
+            return m_server.get_alias();
+        }
+
+        void set_alias(const std::string &alias)
+        {
+            m_server.set_alias(alias);
+        }
+
+        bool start(const std::string &host, const std::string &port)
+        {
+            return m_server.start(host, port);
+        }
+
+        bool stop()
+        {
+            return m_server.stop();
+        }
+
+        bool send(const client_id_t& client_id, const shared_buffer_t &buffer, const size_t &size)
+        {
+            return m_server.send(client_id, buffer, size);
+        }
+
+        bool disconnect(const client_id_t& client_id)
+        {
+            return m_server.disconnect(client_id);
+        }
+
+        bool send_bytes(const client_id_t& client_id, const void *data, const size_t &size)
+        {
+            return m_server.send_bytes(client_id, data, size);
+        }
+
+        bool send_string(const client_id_t& client_id, const std::string &str)
+        {
+            return m_server.send_string(client_id, str);
+        }
+
+        template<typename T>
+        bool send_vec(const client_id_t& client_id, const std::vector<T> &data)
+        {
+            return m_server.send_vec(client_id, data);
+        }
+    };
+
+    using tcp_server = server_wrapper<base_tcp_server_unwrapped>;
+    using udp_server = server_wrapper<base_udp_server_unwrapped>;
+
 }
 }
