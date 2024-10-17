@@ -693,22 +693,6 @@ namespace hl
 {
 namespace net
 {
-    class Error : public std::exception
-    {
-    private:
-        std::string m_error;
-
-    public:
-        Error(const std::string &error)
-            : m_error(error)
-        {}
-
-        const char *what() const noexcept override
-        {
-            return m_error.c_str();
-        }
-    };
-
     using byte = uint8_t;
 
     using buffer_t = std::array<byte, 1024>;
@@ -750,9 +734,9 @@ namespace net
     // The buffer used in on_send_* is the same buffer that is sent
     // This means that the buffer is not copied but sent as a reference
     // Please keep this in mind
-    using client_on_send_callback               = std::function<bool(base_abstract_client_unwrapped& client, buffer_t& buffer_copy, size_t& size)>;
-    using client_on_send_error_callback         = std::function<void(base_abstract_client_unwrapped& client, const buffer_t& buffer_copy, const boost::system::error_code& ec, const size_t& sent_bytes)>;
-    using client_on_send_success_callback       = std::function<void(base_abstract_client_unwrapped& client, const buffer_t& buffer_copy, const size_t& sent_bytes)>;
+    using client_on_send_callback               = std::function<bool(base_abstract_client_unwrapped& client, buffer_t& buffer_ref, size_t& size)>;
+    using client_on_send_error_callback         = std::function<void(base_abstract_client_unwrapped& client, const buffer_t& buffer_ref, const boost::system::error_code& ec, const size_t& sent_bytes)>;
+    using client_on_send_success_callback       = std::function<void(base_abstract_client_unwrapped& client, const buffer_t& buffer_ref, const size_t& sent_bytes)>;
 
     using shared_base_abstract_client_unwrapped = std::shared_ptr<base_abstract_client_unwrapped>;
 
@@ -948,19 +932,19 @@ namespace net
 
         struct connection_data 
         {
-            boost::asio::io_service m_io_service;
-            std::thread m_io_service_thread;
+            boost::asio::io_service io_service;
+            std::thread io_service_thread;
 
-            typename Protocol::resolver m_resolver;
-            typename Protocol::resolver::iterator m_endpoint_iterator;
-            typename Protocol::socket m_socket;
+            typename Protocol::resolver resolver;
+            typename Protocol::resolver::iterator endpoint_iterator;
+            typename Protocol::socket socket;
 
             connection_data(const std::string &host, const std::string &port)
-                : m_io_service()
-                , m_io_service_thread()
-                , m_resolver(m_io_service)
-                , m_endpoint_iterator(m_resolver.resolve({ host, port }))
-                , m_socket(m_io_service)
+                : io_service()
+                , io_service_thread()
+                , resolver(io_service)
+                , endpoint_iterator(resolver.resolve({ host, port }))
+                , socket(io_service)
             {
             }
 
@@ -993,7 +977,7 @@ namespace net
             auto recv_buffer = this->receive_buffer();
 
             SPDLOG_INFO("Start reading for client: {}", get_alias());
-            m_connection_data->m_socket.async_receive(
+            m_connection_data->socket.async_receive(
                 boost::asio::buffer(*recv_buffer),
                 [this, client, recv_buffer](const boost::system::error_code &ec, size_t bytes_transferred)
                 {
@@ -1122,16 +1106,15 @@ namespace net
             boost::system::error_code error = boost::asio::error::host_not_found;
             boost::asio::ip::tcp::resolver::iterator end;
 
-            while (error && m_connection_data->m_endpoint_iterator != end)
+            while (error && m_connection_data->endpoint_iterator != end)
             {
-                m_connection_data->m_socket.close();
-                m_connection_data->m_socket.connect(*m_connection_data->m_endpoint_iterator++, error);
+                m_connection_data->socket.close();
+                m_connection_data->socket.connect(*m_connection_data->endpoint_iterator++, error);
             }
 
             if (error)
             {
                 SPDLOG_ERROR("Error connecting client: {} with error: {}", get_alias(), error.message());
-                m_on_connect_error(*this, error);
                 m_callback_thread_pool.push(
                 [this, error]()
                 {
@@ -1144,14 +1127,14 @@ namespace net
             m_connected = true;
             m_healthy = true;
 
-            m_connection_data->m_io_service_thread = std::thread(
+            m_connection_data->io_service_thread = std::thread(
             [this]()
             {
                 SPDLOG_WARN("Starting io_service thread for client: {}", get_alias());
                 while (true) {
-                    this->m_connection_data->m_io_service.run();
+                    this->m_connection_data->io_service.run();
                     if (healthy()) {
-                        this->m_connection_data->m_io_service.reset();
+                        this->m_connection_data->io_service.reset();
                     } else {
                         break;
                     }
@@ -1185,9 +1168,9 @@ namespace net
 
             m_connected = false;
             m_healthy = false;
-            m_connection_data->m_socket.close();
-            m_connection_data->m_io_service.stop();
-            m_connection_data->m_io_service_thread.join();
+            m_connection_data->socket.close();
+            m_connection_data->io_service.stop();
+            m_connection_data->io_service_thread.join();
             m_connection_data = nullptr;
 
             m_callback_thread_pool.push(
@@ -1213,77 +1196,94 @@ namespace net
                 return false;
             }
 
-            size_t size = defsize;
-            if (!this->m_on_send(*this, *buffer, size))
+            if (!defsize)
             {
-                SPDLOG_ERROR("Error on send for client: {} with error: {}", get_alias(), "on_send returned false");
-                m_callback_thread_pool.push(
-                [this, buffer]()
-                {
-                    const static auto ec = boost::system::errc::make_error_code(boost::system::errc::operation_canceled);
-                    this->m_on_send_error(*this, *buffer, ec, 0);
-                });
+                SPDLOG_ERROR("Cannot send 0 bytes to the client: {}", get_alias());
+                return false;
             }
 
-            SPDLOG_INFO("on_send callback validated: Sending {} bytes to the client: {}", size, get_alias());
-
-            auto client = this->as_shared();
-            const auto asio_send_callback = 
-            [this, client, buffer](const boost::system::error_code &ec, size_t bytes_transferred)
+            if (!buffer)
             {
-                if (ec)
+                SPDLOG_ERROR("Cannot send data from a null buffer client: {}", get_alias());
+                return false;
+            }
+
+            if (defsize > buffer->size())
+            {
+                SPDLOG_ERROR("Cannot send more than the buffer size: {} bytes from client: {}", buffer->size(), get_alias());
+                return false;
+            }
+
+            m_callback_thread_pool.push([this, defsize, buffer]()
+            {
+                size_t size = defsize;
+                if (!this->m_on_send(*this, *buffer, size))
                 {
-                    SPDLOG_ERROR("Error on send for client: {} with error: {} and {} bytes", get_alias(), ec.message(), bytes_transferred);
+                    SPDLOG_ERROR("Error on send for client: {} with error: {}", get_alias(), "on_send returned false");
                     m_callback_thread_pool.push(
-                    [this, buffer, ec, bytes_transferred]()
+                    [this, buffer]()
                     {
-                        this->m_on_send_error(*this, *buffer, ec, bytes_transferred);
+                        const static auto ec = boost::system::errc::make_error_code(boost::system::errc::operation_canceled);
+                        this->m_on_send_error(*this, *buffer, ec, 0);
                     });
-
-                    switch (ec.value())
-                    {
-                    case boost::asio::error::eof:
-                    case boost::asio::error::connection_reset:
-                    case boost::asio::error::connection_aborted:
-                    case boost::asio::error::operation_aborted:
-                    case boost::asio::error::broken_pipe:
-                    case boost::asio::error::not_connected:
-                    case boost::asio::error::bad_descriptor:
-                    case boost::asio::error::fault:
-                    case boost::asio::error::host_not_found:
-                    // case boost::asio::error::host_not_found_try_again: == ::eof
-                    case boost::asio::error::host_unreachable:
-                    case boost::asio::error::network_down:
-                    case boost::asio::error::network_reset:
-                    case boost::asio::error::network_unreachable:
-                    case boost::asio::error::no_recovery:
-                        SPDLOG_ERROR("Client cannot send data: {} due to {}, stopping send, considered not healthy!", get_alias(), ec.message());
-                        m_healthy = false;
-                    default:
-                        break;
-                    }
+                    return;
                 }
-                else
-                {
-                    SPDLOG_INFO("Sent {} bytes for client: {}", bytes_transferred, get_alias());
-                    m_callback_thread_pool.push(
-                    [this, buffer, bytes_transferred]()
+
+                SPDLOG_INFO("on_send callback validated: Sending {} bytes to the client: {}", size, get_alias());
+
+                auto client = this->as_shared();
+                
+                SPDLOG_INFO("Sending {} bytes for client: {}", size, get_alias());
+                m_connection_data->socket.async_send(
+                    boost::asio::buffer(*buffer, size),
+                    [this, client, buffer](const boost::system::error_code &ec, size_t bytes_transferred)
                     {
-                        this->m_on_send_success(*this, *buffer, bytes_transferred);
-                    });
-                }
-            };
+                        if (ec)
+                        {
+                            SPDLOG_ERROR("Error on send for client: {} with error: {} and {} bytes", get_alias(), ec.message(), bytes_transferred);
+                            m_callback_thread_pool.push(
+                            [this, buffer, ec, bytes_transferred]()
+                            {
+                                this->m_on_send_error(*this, *buffer, ec, bytes_transferred);
+                            });
 
-            SPDLOG_INFO("Sending {} bytes for client: {}", size, get_alias());
-            m_connection_data->m_socket.async_send(
-                boost::asio::buffer(*buffer, size),
-                asio_send_callback
-            );
-
+                            switch (ec.value())
+                            {
+                            case boost::asio::error::eof:
+                            case boost::asio::error::connection_reset:
+                            case boost::asio::error::connection_aborted:
+                            case boost::asio::error::operation_aborted:
+                            case boost::asio::error::broken_pipe:
+                            case boost::asio::error::not_connected:
+                            case boost::asio::error::bad_descriptor:
+                            case boost::asio::error::fault:
+                            case boost::asio::error::host_not_found:
+                            // case boost::asio::error::host_not_found_try_again: == ::eof
+                            case boost::asio::error::host_unreachable:
+                            case boost::asio::error::network_down:
+                            case boost::asio::error::network_reset:
+                            case boost::asio::error::network_unreachable:
+                            case boost::asio::error::no_recovery:
+                                SPDLOG_ERROR("Client cannot send data: {} due to {}, stopping send, considered not healthy!", get_alias(), ec.message());
+                                m_healthy = false;
+                            default:
+                                break;
+                            }
+                        }
+                        else
+                        {
+                            SPDLOG_INFO("Sent {} bytes for client: {}", bytes_transferred, get_alias());
+                            m_callback_thread_pool.push(
+                            [this, buffer, bytes_transferred]()
+                            {
+                                this->m_on_send_success(*this, *buffer, bytes_transferred);
+                            });
+                        }
+                    };
+                );
+            });
             return true;
         }
-
-        
     };
 
     using tcp_client_unwrapped = base_client_unwrapped<boost::asio::ip::tcp>;
@@ -1297,15 +1297,6 @@ namespace net
         Protocol &m_client;
 
     public:
-
-
-        class Error : public hl::net::Error
-        {
-        public:
-            Error(const std::string &error)
-                : hl::net::Error(error)
-            {}
-        };
 
         explicit client_wrapper()
             : m_shared_client(Protocol::make())
@@ -1463,5 +1454,26 @@ namespace net
 
     using tcp_client = client_wrapper<tcp_client_unwrapped>;
     using udp_client = client_wrapper<udp_client_unwrapped>;
+
+    class base_abstract_server_unwrapped;
+    class base_abstract_connection_unwrapped;
+
+    using server_start_success_callback             = std::function<void(base_abstract_server_unwrapped& server)>;
+    using server_start_error_callback               = std::function<void(base_abstract_server_unwrapped& server, const boost::system::error_code& ec)>;
+    using server_stop_success_callback              = std::function<void(base_abstract_server_unwrapped& server)>;
+    using server_stop_error_callback                = std::function<void(base_abstract_server_unwrapped& server, const boost::system::error_code& ec)>;
+
+    using server_on_connection_callback             = std::function<void(base_abstract_server_unwrapped& server, base_abstract_connection_unwrapped& client)>;
+    using server_on_connection_error_callback       = std::function<void(base_abstract_server_unwrapped& server, const boost::system::error_code& ec)>;
+
+    using server_on_send_callback                   = std::function<bool(base_abstract_server_unwrapped& server, base_abstract_connection_unwrapped& client, buffer_t& buffer_ref, size_t& size)>;
+    using server_on_send_error_callback             = std::function<void(base_abstract_server_unwrapped& server, base_abstract_connection_unwrapped& client, const buffer_t& buffer_ref, const boost::system::error_code& ec, const size_t& sent_bytes)>;
+    using server_on_send_success_callback           = std::function<void(base_abstract_server_unwrapped& server, base_abstract_connection_unwrapped& client, const buffer_t& buffer_ref, const size_t& sent_bytes)>;
+
+    using server_on_receive_callback                = std::function<void(base_abstract_server_unwrapped& server, base_abstract_connection_unwrapped& client, const buffer_t& buffer_copy, const size_t& recv_bytes)>;
+    using server_on_receive_error_callback          = std::function<void(base_abstract_server_unwrapped& server, base_abstract_connection_unwrapped& client, const buffer_t& buffer_copy, const boost::system::error_code& ec, const size_t& recv_bytes)>;
+    using server_on_receive_success_callback        = std::function<void(base_abstract_server_unwrapped& server, base_abstract_connection_unwrapped& client, const buffer_t& buffer_copy, const size_t& recv_bytes)>;
+
+    using shared_base_abstract_server_unwrapped     = std::shared_ptr<base_abstract_server_unwrapped>;
 }
 }

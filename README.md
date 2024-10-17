@@ -128,10 +128,10 @@ namespace net
     // This callback is not called when the buffer is empty
     // Is not called using a separate thread
     // on_send can be used to implement compression or encryption or validation of the buffer (and more)
-    using client_on_send_callback               = std::function<bool(base_abstract_client_unwrapped& client, buffer_t& buffer_copy, size_t& size)>;
+    using client_on_send_callback               = std::function<bool(base_abstract_client_unwrapped& client, buffer_t& buffer_ref, size_t& size)>;
 
-    using client_on_send_error_callback         = std::function<void(base_abstract_client_unwrapped& client, const buffer_t& buffer_copy, const boost::system::error_code& ec, const size_t& sent_bytes)>;
-    using client_on_send_success_callback       = std::function<void(base_abstract_client_unwrapped& client, const buffer_t& buffer_copy, const size_t& sent_bytes)>;
+    using client_on_send_error_callback         = std::function<void(base_abstract_client_unwrapped& client, const buffer_t& buffer_ref, const boost::system::error_code& ec, const size_t& sent_bytes)>;
+    using client_on_send_success_callback       = std::function<void(base_abstract_client_unwrapped& client, const buffer_t& buffer_ref, const size_t& sent_bytes)>;
 
 
     class base_abstract_client_unwrapped
