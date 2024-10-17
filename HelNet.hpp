@@ -712,84 +712,362 @@ namespace net
 
     static inline shared_buffer_t make_shared_buffer(const shared_buffer_t &data)
     {
-        return std::make_shared<buffer_t>(*data);
+        return make_shared_buffer(data->data(), data->size());
+    }
+
+    static inline shared_buffer_t make_shared_buffer(const shared_buffer_t &data, const size_t size)
+    {
+        return make_shared_buffer(data->data(), size);
+    }
+
+    static inline shared_buffer_t make_shared_buffer(const buffer_t &data, const size_t size)
+    {
+        return make_shared_buffer(data.data(), size);
     }
 
     static inline shared_buffer_t make_shared_buffer(const buffer_t &data)
     {
-        return std::make_shared<buffer_t>(data);
+        return make_shared_buffer(data.data(), data.size());
     }
 
     class base_abstract_client_unwrapped;
 
     using client_on_connect_callback            = std::function<void(base_abstract_client_unwrapped& client)>;
-    using client_on_connect_error_callback      = std::function<void(base_abstract_client_unwrapped& client, const boost::system::error_code& ec)>;
+    using client_on_connect_error_callback      = std::function<void(base_abstract_client_unwrapped& client, const boost::system::error_code ec)>;
 
     using client_on_disconnect_callback         = std::function<void(base_abstract_client_unwrapped& client)>;
 
-    // on_receive_* sends a copy of the buffer
-    using client_on_receive_callback            = std::function<void(base_abstract_client_unwrapped& client, buffer_t& buffer_copy, const size_t& recv_bytes)>;
-    using client_on_receive_error_callback      = std::function<void(base_abstract_client_unwrapped& client, buffer_t& buffer_copy, const boost::system::error_code& ec, const size_t& recv_bytes)>;
+    using client_on_receive_callback            = std::function<void(base_abstract_client_unwrapped& client, shared_buffer_t buffer_copy, const size_t recv_bytes)>;
+    using client_on_receive_error_callback      = std::function<void(base_abstract_client_unwrapped& client, shared_buffer_t buffer_copy, const boost::system::error_code ec, const size_t recv_bytes)>;
 
-    // The buffer used in on_send_* is the same buffer that is sent
-    // This means that the buffer is not copied but sent as a reference
-    // Please keep this in mind
-    using client_on_send_callback               = std::function<bool(base_abstract_client_unwrapped& client, buffer_t& buffer_ref, size_t& size)>;
-    using client_on_send_error_callback         = std::function<void(base_abstract_client_unwrapped& client, const buffer_t& buffer_ref, const boost::system::error_code& ec, const size_t& sent_bytes)>;
-    using client_on_send_success_callback       = std::function<void(base_abstract_client_unwrapped& client, const buffer_t& buffer_ref, const size_t& sent_bytes)>;
+    using client_on_sent_callback               = std::function<void(base_abstract_client_unwrapped& client, const size_t sent_bytes)>;
+    using client_on_send_error_callback         = std::function<void(base_abstract_client_unwrapped& client, const boost::system::error_code ec, const size_t sent_bytes)>;
 
     using shared_base_abstract_client_unwrapped = std::shared_ptr<base_abstract_client_unwrapped>;
+
+    class client_callback_register
+    {
+    private:
+        base_abstract_client_unwrapped& m_client_ref;
+        hl::silva::collections::threads::basic_pool_async m_pool;
+
+    private:
+        client_on_connect_callback          m_on_connect_callback;
+        bool                                m_on_connect_is_async;
+
+        client_on_connect_error_callback    m_on_connect_error_callback;
+        bool                                m_on_connect_error_is_async;
+
+        client_on_disconnect_callback       m_on_disconnect_callback;
+        bool                                m_on_disconnect_is_async;
+
+        client_on_receive_callback          m_on_receive_callback;
+        bool                                m_on_receive_is_async;
+
+        client_on_receive_error_callback    m_on_receive_error_callback;
+        bool                                m_on_receive_error_is_async;
+
+        client_on_sent_callback             m_on_sent_callback;
+        bool                                m_on_sent_is_async;
+
+        client_on_send_error_callback       m_on_send_error_callback;
+        bool                                m_on_send_error_is_async;
+
+        std::mutex m_mutex;
+
+    public:
+        void start_pool(void)
+        {
+            m_pool.start();
+        }
+
+        void stop_pool(void)
+        {
+            m_pool.stop();
+        }
+
+        void on_connect(void)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+
+            if (m_on_connect_callback == nullptr)
+            {
+                return;
+            }
+            else if (m_on_connect_is_async)
+            {
+                m_pool.push([this]() { m_on_connect_callback(m_client_ref); });
+            }
+            else
+            {
+                m_on_connect_callback(m_client_ref);
+            }
+        }
+
+        void set_on_connect(const client_on_connect_callback& on_connect_callback)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_connect_callback = on_connect_callback;
+        }
+
+        void set_on_connect_async(bool async)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_connect_is_async = async;
+        }
+
+        void on_connect_error(const boost::system::error_code ec)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+
+            if (m_on_connect_error_callback == nullptr)
+            {
+                return;
+            }
+            else if (m_on_connect_error_is_async)
+            {
+                m_pool.push([this, ec]() { m_on_connect_error_callback(m_client_ref, ec); });
+            }
+            else
+            {
+                m_on_connect_callback(m_client_ref);
+            }
+        }
+
+        void set_on_connect_error(const client_on_connect_error_callback& on_connect_error_callback)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_connect_error_callback = on_connect_error_callback;
+        }
+
+        void set_on_connect_error_async(bool async)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_connect_error_is_async = async;
+        }
+
+        void on_disconnect(void)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+
+            if (m_on_disconnect_callback == nullptr)
+            {
+                return;
+            }
+            else if (m_on_disconnect_is_async)
+            {
+                m_pool.push([this]() { m_on_disconnect_callback(m_client_ref); });
+            }
+            else
+            {
+                m_on_disconnect_callback(m_client_ref);
+            }
+        }
+
+        void set_on_disconnect(const client_on_disconnect_callback& on_disconnect_callback)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_disconnect_callback = on_disconnect_callback;
+        }
+
+        void set_on_disconnect_async(bool async)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_disconnect_is_async = async;
+        }
+
+        void on_receive(shared_buffer_t buffer_copy, const size_t recv_bytes)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+
+            if (m_on_receive_callback == nullptr)
+            {
+                return;
+            }
+            else if (m_on_receive_is_async)
+            {
+                m_pool.push([this, buffer_copy, recv_bytes]() { m_on_receive_callback(m_client_ref, buffer_copy, recv_bytes); });
+            }
+            else
+            {
+                m_on_receive_callback(m_client_ref, buffer_copy, recv_bytes);
+            }
+        }
+
+        void set_on_receive(const client_on_receive_callback& on_receive_callback)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_receive_callback = on_receive_callback;
+        }
+
+        void set_on_receive_async(bool async)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_receive_is_async = async;
+        }
+
+        void on_receive_error(shared_buffer_t buffer_copy, const boost::system::error_code ec, const size_t recv_bytes)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+
+            if (m_on_receive_error_callback == nullptr)
+            {
+                return;
+            }
+            else if (m_on_receive_error_is_async)
+            {
+                m_pool.push([this, buffer_copy, ec, recv_bytes]() { m_on_receive_error_callback(m_client_ref, buffer_copy, ec, recv_bytes); });
+            }
+            else
+            {
+                m_on_receive_error_callback(m_client_ref, buffer_copy, ec, recv_bytes);
+            }
+        }
+
+        void set_on_receive_error(const client_on_receive_error_callback& on_receive_error_callback)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_receive_error_callback = on_receive_error_callback;
+        }
+
+        void set_on_receive_error_async(bool async)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_receive_error_is_async = async;
+        }
+
+        void on_sent(const size_t sent_bytes)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+
+            if (m_on_sent_callback == nullptr)
+            {
+                return;
+            }
+            else if (m_on_sent_is_async)
+            {
+                m_pool.push([this, sent_bytes]() { m_on_sent_callback(m_client_ref, sent_bytes); });
+            }
+            else
+            {
+                m_on_sent_callback(m_client_ref, sent_bytes);
+            }
+        }
+
+        void set_on_sent(const client_on_sent_callback& on_sent_callback)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_sent_callback = on_sent_callback;
+        }
+
+        void set_on_sent_async(bool async)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_sent_is_async = async;
+        }
+
+        void on_send_error(const boost::system::error_code ec, const size_t sent_bytes)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+
+            if (m_on_send_error_callback == nullptr)
+            {
+                return;
+            }
+            else if (m_on_send_error_is_async)
+            {
+                m_pool.push([this, ec, sent_bytes]() { m_on_send_error_callback(m_client_ref, ec, sent_bytes); });
+            }
+            else
+            {
+                m_on_send_error_callback(m_client_ref, ec, sent_bytes);
+            }           
+        }
+
+        void set_on_send_error(const client_on_send_error_callback& on_send_error_callback)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_send_error_callback = on_send_error_callback;
+        }
+
+        void set_on_send_error_async(bool async)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_send_error_is_async = async;
+        }
+    
+    public:
+        client_callback_register(base_abstract_client_unwrapped& client)
+            : m_client_ref(client)
+            , m_pool(true)
+            , m_on_connect_callback(nullptr)
+            , m_on_connect_is_async(false)
+            , m_on_connect_error_callback(nullptr)
+            , m_on_connect_error_is_async(false)
+            , m_on_disconnect_callback(nullptr)
+            , m_on_disconnect_is_async(false)
+            , m_on_receive_callback(nullptr)
+            , m_on_receive_is_async(false)
+            , m_on_receive_error_callback(nullptr)
+            , m_on_receive_error_is_async(false)
+            , m_on_sent_callback(nullptr)
+            , m_on_sent_is_async(false)
+            , m_on_send_error_callback(nullptr)
+            , m_on_send_error_is_async(false)
+            , m_mutex()
+        {}
+    };
 
     // base client class
     class base_abstract_client_unwrapped : public std::enable_shared_from_this<base_abstract_client_unwrapped>
     {
-    protected:
-        // callbacks
-        client_on_connect_callback m_on_connect;
-        client_on_connect_error_callback m_on_connect_error;
+    public:
+        virtual bool connect(const std::string &host, const std::string &port) = 0;
+        virtual bool disconnect(void) = 0;
+        virtual bool send(const shared_buffer_t &buffer, const size_t &size) = 0;
 
-        client_on_disconnect_callback m_on_disconnect;
-
-        client_on_receive_callback m_on_receive;
-        client_on_receive_error_callback m_on_receive_error;
-
-        client_on_send_callback m_on_send;
-        client_on_send_error_callback m_on_send_error;
-        client_on_send_success_callback m_on_send_success;
-
-        // callback thread pool
-        hl::silva::collections::threads::basic_pool_async m_callback_thread_pool;
-
-        // connection status
+    private:
         std::atomic_bool m_connected;
         std::atomic_bool m_healthy;
 
-    private:
         shared_buffer_t m_receive_buffer;
 
         mutable std::mutex m_alias_mutex;
         std::string m_alias;
 
+        client_callback_register m_callback_register;
+
+    protected:
+        shared_base_abstract_client_unwrapped as_shared()
+        {
+            return shared_from_this();
+        }
+
+        shared_buffer_t receive_buffer()
+        {
+            return m_receive_buffer;
+        }
+
     public:
         base_abstract_client_unwrapped()
-            : m_on_connect(nullptr)
-            , m_on_connect_error(nullptr)
-            , m_on_disconnect(nullptr)
-            , m_on_receive(nullptr)
-            , m_on_receive_error(nullptr)
-            , m_on_send(nullptr)
-            , m_on_send_error(nullptr)
-            , m_on_send_success(nullptr)
-            , m_callback_thread_pool()
-            , m_connected(false)
+            : m_connected(false)
             , m_healthy(false)
             , m_receive_buffer(make_shared_buffer())
             , m_alias_mutex()
             , m_alias(fmt::format("{}", static_cast<void *>(this)))
+            , m_callback_register(*this)
         {}
 
-        virtual ~base_abstract_client_unwrapped() = default;
+    private:
+        void _cleanup()
+        {
+            if (connected())
+            {
+                disconnect();
+            }
+        }
 
+    public:
         const std::string get_alias() const
         {
             std::lock_guard<std::mutex> lock(m_alias_mutex);
@@ -804,97 +1082,41 @@ namespace net
             m_alias = alias;
         }
 
-        void set_on_connect(const client_on_connect_callback &callback)
+        virtual ~base_abstract_client_unwrapped()
         {
-            m_on_connect = callback;
-            SPDLOG_INFO("Set on_connect callback for client: {} with callback: {}", get_alias(), fmt::ptr(&callback));
+            SPDLOG_INFO("Destroying base_client_unwrapped: {}", get_alias());
+            _cleanup();
+            SPDLOG_INFO("Destroyed base_client_unwrapped: {}", get_alias());
         }
 
-        void set_on_connect_error(const client_on_connect_error_callback &callback)
+        client_callback_register& callbacks()
         {
-            m_on_connect_error = callback;
-            SPDLOG_INFO("Set on_connect_error callback for client: {} with callback: {}", get_alias(), fmt::ptr(&callback));
+            return m_callback_register;
         }
 
-        void set_on_disconnect(const client_on_disconnect_callback &callback)
-        {
-            m_on_disconnect = callback;
-            SPDLOG_INFO("Set on_disconnect callback for client: {} with callback: {}", get_alias(), fmt::ptr(&callback));
-        }
-
-        void set_on_receive(const client_on_receive_callback &callback)
-        {
-            m_on_receive = callback;
-            SPDLOG_INFO("Set on_receive callback for client: {} with callback: {}", get_alias(), fmt::ptr(&callback));
-        }
-
-        void set_on_receive_error(const client_on_receive_error_callback &callback)
-        {
-            m_on_receive_error = callback;
-            SPDLOG_INFO("Set on_receive_error callback for client: {} with callback: {}", get_alias(), fmt::ptr(&callback));
-        }
-
-        void set_on_send(const client_on_send_callback &callback)
-        {
-            m_on_send = callback;
-            SPDLOG_INFO("Set on_send callback for client: {} with callback: {}", get_alias(), fmt::ptr(&callback));
-        }
-
-        void set_on_send_error(const client_on_send_error_callback &callback)
-        {
-            m_on_send_error = callback;
-            SPDLOG_INFO("Set on_send_error callback for client: {} with callback: {}", get_alias(), fmt::ptr(&callback));
-        }
-
-        void set_on_send_success(const client_on_send_success_callback &callback)
-        {
-            m_on_send_success = callback;
-            SPDLOG_INFO("Set on_send_success callback for client: {} with callback: {}", get_alias(), fmt::ptr(&callback));
-        }
-
-    public:
-        bool connected() const
+        bool connected(void) const
         {
             return m_connected;
         }
 
-        bool healthy() const
+        bool healthy(void) const
         {
-            return m_healthy && m_connected;
+            return m_healthy && connected();
         }
 
-        shared_buffer_t &receive_buffer()
+        void set_connect_status(const bool status)
         {
-            return m_receive_buffer;
+            m_connected = status;
+            SPDLOG_WARN("Client: {} connected status set to: {}", get_alias(), status);
         }
 
-        const shared_buffer_t &receive_buffer() const
+        void set_health_status(const bool status)
         {
-            return m_receive_buffer;
+            m_healthy = status;
+            SPDLOG_WARN("Client: {} health status set to: {}", get_alias(), status);
         }
 
-        shared_base_abstract_client_unwrapped as_shared()
-        {
-            return shared_from_this();
-        }
-
-        bool callbacks_are_non_null()
-        {
-            return m_on_connect &&
-                m_on_connect_error &&
-                m_on_disconnect &&
-                m_on_receive &&
-                m_on_receive_error &&
-                m_on_send &&
-                m_on_send_error &&
-                m_on_send_success;
-        }
-
-        virtual bool connect(const std::string &host, const std::string &port) = 0;
-        virtual bool disconnect() = 0;
-        virtual bool send(shared_buffer_t &buffer, const size_t &size) = 0;
-
-        bool send(shared_buffer_t &buffer)
+        bool send(const shared_buffer_t &buffer)
         {
             return send(buffer, buffer->size());
         }
@@ -918,7 +1140,7 @@ namespace net
         }
 
         template<typename T>
-        bool send_vec(const std::vector<T> &data, const size_t& size)
+        bool send_vec(const std::vector<T> &data, const size_t size)
         {
             return send_bytes(static_cast<const void *>(data.data()), std::min(size, data.size()) * sizeof(T));
         }
@@ -952,20 +1174,10 @@ namespace net
         };
 
     private:
-        using base_abstract_client_unwrapped::m_on_connect;
-        using base_abstract_client_unwrapped::m_on_connect_error;
-        using base_abstract_client_unwrapped::m_on_disconnect;
-        using base_abstract_client_unwrapped::m_on_receive;
-        using base_abstract_client_unwrapped::m_on_receive_error;
-        using base_abstract_client_unwrapped::m_on_send;
-        using base_abstract_client_unwrapped::m_on_send_error;
-        using base_abstract_client_unwrapped::m_on_send_success;
-
-    private:
 
         std::unique_ptr<connection_data> m_connection_data = nullptr;
 
-        void _start_reading()
+        void _receive_async()
         {
             if (!healthy())
             {
@@ -981,18 +1193,12 @@ namespace net
                 boost::asio::buffer(*recv_buffer),
                 [this, client, recv_buffer](const boost::system::error_code &ec, size_t bytes_transferred)
                 {
-                    auto buffer_cpy = make_shared_buffer(recv_buffer);
+                    auto buffer_cpy = make_shared_buffer(recv_buffer, bytes_transferred);
 
                     SPDLOG_INFO("Received {} bytes for client: {}", bytes_transferred, get_alias());
-
                     if (ec)
                     {
                         SPDLOG_ERROR("Error on receive for client: {} with error: {}", get_alias(), ec.message());
-                        this->m_callback_thread_pool.push(
-                        [this, buffer_cpy, ec, bytes_transferred]()
-                        {
-                            this->m_on_receive_error(*this, *buffer_cpy, ec, bytes_transferred);
-                        });
                         switch (ec.value())
                         {
                         case boost::asio::error::eof:
@@ -1011,19 +1217,15 @@ namespace net
                         case boost::asio::error::network_unreachable:
                         case boost::asio::error::no_recovery:
                             SPDLOG_ERROR("Client cannot connect: {} stopping reading due to {}, stopping read, considered not healthy!", get_alias(), ec.message());
-                            m_healthy = false;
+                            set_health_status(false);
                         default:
                             break;
                         }
+                        callbacks().on_receive_error(buffer_cpy, ec, bytes_transferred);
                     }
                     else
                     {
-                        SPDLOG_INFO("Received {} bytes for client: {}", bytes_transferred, get_alias());
-                        m_callback_thread_pool.push(
-                        [this, buffer_cpy, bytes_transferred]()
-                        {
-                            this->m_on_receive(*this, *buffer_cpy, bytes_transferred);
-                        });
+                        callbacks().on_receive(buffer_cpy, bytes_transferred);
                     }
 
                     if (!healthy())
@@ -1032,48 +1234,13 @@ namespace net
                         return;
                     }
 
-                    _start_reading();
+                    _receive_async();
                 }
             );
         }
 
         base_client_unwrapped()
         {
-            SPDLOG_INFO("Creating base_client_unwrapped: {}", get_alias());
-
-            set_on_connect([](base_abstract_client_unwrapped& client) {
-                SPDLOG_INFO("Default callback on_connect for client: {}", client.get_alias());
-            });
-
-            set_on_connect_error([](base_abstract_client_unwrapped& client, const boost::system::error_code &ec) {
-                SPDLOG_ERROR("Default callback on_connect_error for client: {} with error: {}", client.get_alias(), ec.message());
-            });
-
-            set_on_disconnect([](base_abstract_client_unwrapped& client) {
-                SPDLOG_INFO("Default callback on_disconnect for client: {}", client.get_alias());
-            });
-
-            set_on_receive([](base_abstract_client_unwrapped& client, const buffer_t &, const size_t &bytes_transferred) {
-                SPDLOG_INFO("Default callback on_receive for client: {} with {} bytes", client.get_alias(), bytes_transferred);
-            });
-
-            set_on_receive_error([](base_abstract_client_unwrapped& client, const buffer_t &, const boost::system::error_code &ec, const size_t &bytes_transferred) {
-                SPDLOG_ERROR("Default callback on_receive_error for client: {} error: {} bytes: {}", client.get_alias(), ec.message(), bytes_transferred);
-            });
-
-            set_on_send([](base_abstract_client_unwrapped& client, const buffer_t &, size_t &size) {
-                SPDLOG_INFO("Default callback on_send for client: {} bytes: {}, allowing by default send", client.get_alias(), size);
-                return true;
-            });
-
-            set_on_send_error([](base_abstract_client_unwrapped& client, const buffer_t &, const boost::system::error_code &ec, const size_t& bytes_transferred) {
-                SPDLOG_ERROR("Default callback on_send_error for client: {} error: {} bytes: {}", client.get_alias(), ec.message(), bytes_transferred);
-            });
-
-            set_on_send_success([](base_abstract_client_unwrapped& client, const buffer_t &, const size_t& bytes_transferred) {
-                SPDLOG_INFO("Default on_send_success for client: {} with {} bytes", client.get_alias(), bytes_transferred);
-            });
-
             SPDLOG_INFO("Created base_client_unwrapped: {}", get_alias());
         }
 
@@ -1081,27 +1248,27 @@ namespace net
 
         static shared_t make()
         {
-            return std::shared_ptr<base_client_unwrapped>(new base_client_unwrapped());
+            return std::shared_ptr<base_client_unwrapped<Protocol>>(new base_client_unwrapped<Protocol>());
         }
 
-        virtual ~base_client_unwrapped() override
-        {
-            SPDLOG_INFO("Destroying base_client_unwrapped: {}", get_alias());
-            disconnect();
-            SPDLOG_INFO("Destroyed base_client_unwrapped: {}", get_alias());
-        }
+        // Moved on the base class the de
+        virtual ~base_client_unwrapped() override = default;
 
         virtual bool connect(const std::string &host, const std::string &port) override final
         {
             SPDLOG_INFO("Connecting client: {} to {}:{}", get_alias(), host, port);
 
-            if (m_connected)
+            if (connected() == true)
             {
                 SPDLOG_ERROR("Client already connected: {}", get_alias());
                 return false;
             }
+        
+            auto &callback_register = this->callbacks();
 
-            m_connection_data = std::unique_ptr<connection_data>(new connection_data(host, port));
+            callback_register.start_pool();
+
+            m_connection_data = std::make_unique<connection_data>(host, port);
 
             boost::system::error_code error = boost::asio::error::host_not_found;
             boost::asio::ip::tcp::resolver::iterator end;
@@ -1115,17 +1282,13 @@ namespace net
             if (error)
             {
                 SPDLOG_ERROR("Error connecting client: {} with error: {}", get_alias(), error.message());
-                m_callback_thread_pool.push(
-                [this, error]()
-                {
-                    this->m_on_connect_error(*this, error);
-                });
-                m_callback_thread_pool.stop();
+                callback_register.on_connect_error(error);
+                callback_register.stop_pool();
                 return false;
             }
 
-            m_connected = true;
-            m_healthy = true;
+            set_connect_status(true);
+            set_health_status(true);
 
             m_connection_data->io_service_thread = std::thread(
             [this]()
@@ -1142,15 +1305,11 @@ namespace net
                 SPDLOG_WARN("Stopping io_service thread for client: {}", get_alias());
             });
 
-            m_callback_thread_pool.push(
-            [this]()
-            {
-                this->m_on_connect(*this);
-            });
+            callback_register.on_connect();
 
             SPDLOG_INFO("Connected client: {}", get_alias());
 
-            this->_start_reading();
+            this->_receive_async();
             return true;
         }
 
@@ -1158,7 +1317,7 @@ namespace net
         {
             SPDLOG_INFO("Disconnecting client: {}", get_alias());
 
-            if (!m_connected)
+            if (connected() == false)
             {
                 SPDLOG_WARN("Client already disconnected: {}", get_alias());
                 return false;
@@ -1166,122 +1325,92 @@ namespace net
 
             auto client = this->as_shared();
 
-            m_connected = false;
-            m_healthy = false;
+            set_connect_status(false);
+            set_health_status(false);
             m_connection_data->socket.close();
             m_connection_data->io_service.stop();
             m_connection_data->io_service_thread.join();
             m_connection_data = nullptr;
 
-            m_callback_thread_pool.push(
-            [this]()
-            {
-                this->m_on_disconnect(*this);
-            });
+            auto &callback_register = this->callbacks();
+
+            callback_register.on_disconnect();
 
             SPDLOG_INFO("Disconnected client: {}", get_alias());
 
-            m_callback_thread_pool.stop();
+            callback_register.stop_pool();
 
             return true;
         }
 
-        virtual bool send(shared_buffer_t &buffer, const size_t &defsize) override final
+        virtual bool send(const shared_buffer_t &buffer, const size_t &size) override final
         {
-            SPDLOG_INFO("Preparing to send {} bytes for client: {}", defsize, get_alias());
+            SPDLOG_INFO("Preparing to send {} bytes for client: {}", size, get_alias());
 
             if (!healthy())
             {
                 SPDLOG_ERROR("Cannot send data to from a non-healthy client: {}", get_alias());
                 return false;
             }
-
-            if (!defsize)
+            else if (!size)
             {
                 SPDLOG_ERROR("Cannot send 0 bytes to the client: {}", get_alias());
                 return false;
             }
-
-            if (!buffer)
+            else if (!buffer)
             {
                 SPDLOG_ERROR("Cannot send data from a null buffer client: {}", get_alias());
                 return false;
             }
-
-            if (defsize > buffer->size())
+            else if (size > buffer->size())
             {
                 SPDLOG_ERROR("Cannot send more than the buffer size: {} bytes from client: {}", buffer->size(), get_alias());
                 return false;
             }
 
-            m_callback_thread_pool.push([this, defsize, buffer]()
-            {
-                size_t size = defsize;
-                if (!this->m_on_send(*this, *buffer, size))
+            auto client = this->as_shared();
+            
+            SPDLOG_INFO("Sending {} bytes for client: {}", size, get_alias());
+            m_connection_data->socket.async_send(
+                boost::asio::buffer(*buffer, size),
+                [this, client, buffer]
+                (const boost::system::error_code &ec, size_t bytes_transferred)
                 {
-                    SPDLOG_ERROR("Error on send for client: {} with error: {}", get_alias(), "on_send returned false");
-                    m_callback_thread_pool.push(
-                    [this, buffer]()
+                    if (ec)
                     {
-                        const static auto ec = boost::system::errc::make_error_code(boost::system::errc::operation_canceled);
-                        this->m_on_send_error(*this, *buffer, ec, 0);
-                    });
-                    return;
+                        SPDLOG_ERROR("Error on send for client: {} with error: {} and {} bytes", get_alias(), ec.message(), bytes_transferred);
+                        callbacks().on_send_error(ec, bytes_transferred);
+
+                        switch (ec.value())
+                        {
+                        case boost::asio::error::eof:
+                        case boost::asio::error::connection_reset:
+                        case boost::asio::error::connection_aborted:
+                        case boost::asio::error::operation_aborted:
+                        case boost::asio::error::broken_pipe:
+                        case boost::asio::error::not_connected:
+                        case boost::asio::error::bad_descriptor:
+                        case boost::asio::error::fault:
+                        case boost::asio::error::host_not_found:
+                        // case boost::asio::error::host_not_found_try_again: == ::eof
+                        case boost::asio::error::host_unreachable:
+                        case boost::asio::error::network_down:
+                        case boost::asio::error::network_reset:
+                        case boost::asio::error::network_unreachable:
+                        case boost::asio::error::no_recovery:
+                            SPDLOG_ERROR("Client cannot send data: {} due to {}, stopping send, considered not healthy!", get_alias(), ec.message());
+                            set_health_status(false);
+                        default:
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        SPDLOG_INFO("Sent {} bytes for client: {}", bytes_transferred, get_alias());
+                        callbacks().on_sent(bytes_transferred);
+                    }
                 }
-
-                SPDLOG_INFO("on_send callback validated: Sending {} bytes to the client: {}", size, get_alias());
-
-                auto client = this->as_shared();
-                
-                SPDLOG_INFO("Sending {} bytes for client: {}", size, get_alias());
-                m_connection_data->socket.async_send(
-                    boost::asio::buffer(*buffer, size),
-                    [this, client, buffer](const boost::system::error_code &ec, size_t bytes_transferred)
-                    {
-                        if (ec)
-                        {
-                            SPDLOG_ERROR("Error on send for client: {} with error: {} and {} bytes", get_alias(), ec.message(), bytes_transferred);
-                            m_callback_thread_pool.push(
-                            [this, buffer, ec, bytes_transferred]()
-                            {
-                                this->m_on_send_error(*this, *buffer, ec, bytes_transferred);
-                            });
-
-                            switch (ec.value())
-                            {
-                            case boost::asio::error::eof:
-                            case boost::asio::error::connection_reset:
-                            case boost::asio::error::connection_aborted:
-                            case boost::asio::error::operation_aborted:
-                            case boost::asio::error::broken_pipe:
-                            case boost::asio::error::not_connected:
-                            case boost::asio::error::bad_descriptor:
-                            case boost::asio::error::fault:
-                            case boost::asio::error::host_not_found:
-                            // case boost::asio::error::host_not_found_try_again: == ::eof
-                            case boost::asio::error::host_unreachable:
-                            case boost::asio::error::network_down:
-                            case boost::asio::error::network_reset:
-                            case boost::asio::error::network_unreachable:
-                            case boost::asio::error::no_recovery:
-                                SPDLOG_ERROR("Client cannot send data: {} due to {}, stopping send, considered not healthy!", get_alias(), ec.message());
-                                m_healthy = false;
-                            default:
-                                break;
-                            }
-                        }
-                        else
-                        {
-                            SPDLOG_INFO("Sent {} bytes for client: {}", bytes_transferred, get_alias());
-                            m_callback_thread_pool.push(
-                            [this, buffer, bytes_transferred]()
-                            {
-                                this->m_on_send_success(*this, *buffer, bytes_transferred);
-                            });
-                        }
-                    };
-                );
-            });
+            );
             return true;
         }
     };
@@ -1303,6 +1432,16 @@ namespace net
             , m_client(*m_shared_client)
         {
             SPDLOG_INFO("Creating client wrapper for: {}", get_alias());
+
+            auto &callbacks_register = m_client.callbacks();
+
+            callbacks_register.set_on_connect([](base_abstract_client_unwrapped& client) { SPDLOG_INFO("Client connected: {}", client.get_alias()); });
+            callbacks_register.set_on_connect_error([](base_abstract_client_unwrapped& client, const boost::system::error_code ec) { SPDLOG_ERROR("Client connect error: {} - {}", client.get_alias(), ec.message()); });
+            callbacks_register.set_on_disconnect([](base_abstract_client_unwrapped& client) { SPDLOG_INFO("Client disconnected: {}", client.get_alias()); });
+            callbacks_register.set_on_receive([](base_abstract_client_unwrapped& client, shared_buffer_t, const size_t recv_bytes) { SPDLOG_INFO("Client received: {} - {}", client.get_alias(), recv_bytes); });
+            callbacks_register.set_on_receive_error([](base_abstract_client_unwrapped& client, shared_buffer_t, const boost::system::error_code ec, const size_t recv_bytes) { SPDLOG_ERROR("Client receive error: {} - {} - {}", client.get_alias(), ec.message(), recv_bytes); });
+            callbacks_register.set_on_sent([](base_abstract_client_unwrapped& client, const size_t sent_bytes) { SPDLOG_INFO("Client sent: {} - {}", client.get_alias(), sent_bytes); });
+            callbacks_register.set_on_send_error([](base_abstract_client_unwrapped& client, const boost::system::error_code ec, const size_t sent_bytes) { SPDLOG_ERROR("Client send error: {} - {} - {}", client.get_alias(), ec.message(), sent_bytes); });
         }
 
         ~client_wrapper()
@@ -1326,44 +1465,9 @@ namespace net
             m_client.set_alias(alias);
         }
 
-        void set_on_connect(const client_on_connect_callback &callback)
+        client_callback_register& callbacks()
         {
-            m_client.set_on_connect(callback);
-        }
-
-        void set_on_connect_error(const client_on_connect_error_callback &callback)
-        {
-            m_client.set_on_connect_error(callback);
-        }
-
-        void set_on_disconnect(const client_on_disconnect_callback &callback)
-        {
-            m_client.set_on_disconnect(callback);
-        }
-
-        void set_on_receive(const client_on_receive_callback &callback)
-        {
-            m_client.set_on_receive(callback);
-        }
-
-        void set_on_receive_error(const client_on_receive_error_callback &callback)
-        {
-            m_client.set_on_receive_error(callback);
-        }
-
-        void set_on_send(const client_on_send_callback &callback)
-        {
-            m_client.set_on_send(callback);
-        }
-
-        void set_on_send_error(const client_on_send_error_callback &callback)
-        {
-            m_client.set_on_send_error(callback);
-        }
-
-        void set_on_send_success(const client_on_send_success_callback &callback)
-        {
-            m_client.set_on_send_success(callback);
+            return m_client.callbacks();
         }
 
         bool connected() const
@@ -1376,21 +1480,6 @@ namespace net
             return m_client.healthy();
         }
 
-        shared_buffer_t &receive_buffer()
-        {
-            return m_client.receive_buffer();
-        }
-
-        const shared_buffer_t &receive_buffer() const
-        {
-            return m_client.receive_buffer();
-        }
-
-        bool callbacks_are_non_null()
-        {
-            return m_client.callbacks_are_non_null();
-        }
-
         bool connect(const std::string &host, const std::string &port, bool auto_alias = true)
         {
             if (auto_alias) {
@@ -1399,19 +1488,19 @@ namespace net
             return m_client.connect(host, port);
         }
 
-        bool disconnect()
+        bool disconnect(void)
         {
             return m_client.disconnect();
         }
 
-        bool send(shared_buffer_t &buffer, const size_t &size)
-        {
-            return m_client.send(buffer, size);
-        }
-
-        bool send(shared_buffer_t &buffer)
+        bool send(const shared_buffer_t &buffer)
         {
             return m_client.send(buffer);
+        }
+
+        bool send(const shared_buffer_t &buffer, const size_t &size)
+        {
+            return m_client.send(buffer, size);
         }
 
         bool send_bytes(const void *data, const size_t &size)
@@ -1431,19 +1520,9 @@ namespace net
         }
 
         template<typename T>
-        bool send_vec(const std::vector<T> &data, const size_t& size)
+        bool send_vec(const std::vector<T> &data, const size_t size)
         {
             return m_client.send_vec(data, size);
-        }
-
-        typename Protocol::shared_t client_as_shared()
-        {
-            return m_shared_client;
-        }
-
-        const typename Protocol::shared_t client_as_shared() const
-        {
-            return m_shared_client;
         }
 
         operator bool() const
@@ -1458,22 +1537,767 @@ namespace net
     class base_abstract_server_unwrapped;
     class base_abstract_connection_unwrapped;
 
+    using shared_abstract_server     = std::shared_ptr<base_abstract_server_unwrapped>;
+    using shared_abstract_connection = std::shared_ptr<base_abstract_connection_unwrapped>;
+
+    using client_id_t = std::uint64_t;
+    static constexpr client_id_t invalid_client_id = std::numeric_limits<client_id_t>::max();
+
     using server_start_success_callback             = std::function<void(base_abstract_server_unwrapped& server)>;
-    using server_start_error_callback               = std::function<void(base_abstract_server_unwrapped& server, const boost::system::error_code& ec)>;
+    using server_start_error_callback               = std::function<void(base_abstract_server_unwrapped& server, const boost::system::error_code ec)>;
+
     using server_stop_success_callback              = std::function<void(base_abstract_server_unwrapped& server)>;
-    using server_stop_error_callback                = std::function<void(base_abstract_server_unwrapped& server, const boost::system::error_code& ec)>;
+    using server_stop_error_callback                = std::function<void(base_abstract_server_unwrapped& server, const boost::system::error_code ec)>;
 
-    using server_on_connection_callback             = std::function<void(base_abstract_server_unwrapped& server, base_abstract_connection_unwrapped& client)>;
-    using server_on_connection_error_callback       = std::function<void(base_abstract_server_unwrapped& server, const boost::system::error_code& ec)>;
+    using server_on_connection_callback             = std::function<void(base_abstract_server_unwrapped& server, shared_abstract_connection client)>;
+    using server_on_connection_error_callback       = std::function<void(base_abstract_server_unwrapped& server, const boost::system::error_code ec)>;
 
-    using server_on_send_callback                   = std::function<bool(base_abstract_server_unwrapped& server, base_abstract_connection_unwrapped& client, buffer_t& buffer_ref, size_t& size)>;
-    using server_on_send_error_callback             = std::function<void(base_abstract_server_unwrapped& server, base_abstract_connection_unwrapped& client, const buffer_t& buffer_ref, const boost::system::error_code& ec, const size_t& sent_bytes)>;
-    using server_on_send_success_callback           = std::function<void(base_abstract_server_unwrapped& server, base_abstract_connection_unwrapped& client, const buffer_t& buffer_ref, const size_t& sent_bytes)>;
+    using server_on_sent_callback                   = std::function<void(base_abstract_server_unwrapped& server, shared_abstract_connection client, const size_t sent_bytes)>;
+    using server_on_send_error_callback             = std::function<void(base_abstract_server_unwrapped& server, shared_abstract_connection client, const boost::system::error_code ec, const size_t sent_bytes)>;
 
-    using server_on_receive_callback                = std::function<void(base_abstract_server_unwrapped& server, base_abstract_connection_unwrapped& client, const buffer_t& buffer_copy, const size_t& recv_bytes)>;
-    using server_on_receive_error_callback          = std::function<void(base_abstract_server_unwrapped& server, base_abstract_connection_unwrapped& client, const buffer_t& buffer_copy, const boost::system::error_code& ec, const size_t& recv_bytes)>;
-    using server_on_receive_success_callback        = std::function<void(base_abstract_server_unwrapped& server, base_abstract_connection_unwrapped& client, const buffer_t& buffer_copy, const size_t& recv_bytes)>;
+    using server_on_receive_callback                = std::function<void(base_abstract_server_unwrapped& server, shared_abstract_connection client, shared_buffer_t buffer_copy, const size_t recv_bytes)>;
+    using server_on_receive_success_callback        = std::function<void(base_abstract_server_unwrapped& server, shared_abstract_connection client, shared_buffer_t buffer_copy, const size_t recv_bytes)>;
+    using server_on_receive_error_callback          = std::function<void(base_abstract_server_unwrapped& server, shared_abstract_connection client, shared_buffer_t buffer_copy, const boost::system::error_code ec, const size_t recv_bytes)>;
 
-    using shared_base_abstract_server_unwrapped     = std::shared_ptr<base_abstract_server_unwrapped>;
+    class server_callback_register
+    {
+    private:
+        base_abstract_server_unwrapped& m_server_ref;
+        hl::silva::collections::threads::basic_pool_async m_pool;
+        
+    private:
+        server_start_success_callback       m_on_start_success_callback;
+        bool                                m_on_start_success_is_async;
+
+        server_start_error_callback         m_on_start_error_callback;
+        bool                                m_on_start_error_is_async;
+
+        server_stop_success_callback        m_on_stop_success_callback;
+        bool                                m_on_stop_success_is_async;
+
+        server_stop_error_callback          m_on_stop_error_callback;
+        bool                                m_on_stop_error_is_async;
+
+        server_on_connection_callback       m_on_connection_callback;
+        bool                                m_on_connection_is_async;
+
+        server_on_sent_callback             m_on_sent_callback;
+        bool                                m_on_sent_is_async;
+
+        server_on_send_error_callback       m_on_send_error_callback;
+        bool                                m_on_send_error_is_async;
+
+        server_on_receive_callback          m_on_receive_callback;
+        bool                                m_on_receive_is_async;
+
+        server_on_receive_error_callback    m_on_receive_error_callback;
+        bool                                m_on_receive_error_is_async;
+
+        server_on_receive_success_callback  m_on_receive_success_callback;
+        bool                                m_on_receive_success_is_async;
+    
+        std::mutex m_mutex;
+
+    public:
+        void start_pool(void)
+        {
+            m_pool.start();
+        }
+
+        void stop_pool(void)
+        {
+            m_pool.stop();
+        }
+
+        void on_start_success(void)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+
+            if (m_on_start_success_callback == nullptr)
+            {
+                return;
+            }
+            else if (m_on_start_success_is_async)
+            {
+                m_pool.push([this]() { m_on_start_success_callback(m_server_ref); });
+            }
+            else
+            {
+                m_on_start_success_callback(m_server_ref);
+            }
+        }
+
+        void set_on_start_success(const server_start_success_callback& start_success_callback)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_start_success_callback = start_success_callback;
+        }
+
+        void set_on_start_success_async(bool async)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_start_success_is_async = async;
+        }
+
+        void on_start_error(const boost::system::error_code ec)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+
+            if (m_on_start_error_callback == nullptr)
+            {
+                return;
+            }
+            else if (m_on_start_error_is_async)
+            {
+                m_pool.push([this, ec]() { m_on_start_error_callback(m_server_ref, ec); });
+            }
+            else
+            {
+                m_on_start_error_callback(m_server_ref, ec);
+            }
+        }
+
+        void set_on_start_error(const server_start_error_callback& start_error_callback)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_start_error_callback = start_error_callback;
+        }
+
+        void set_on_start_error_async(bool async)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_start_error_is_async = async;
+        }
+
+        void on_stop_success(void)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+
+            if (m_on_stop_success_callback == nullptr)
+            {
+                return;
+            }
+            else if (m_on_stop_success_is_async)
+            {
+                m_pool.push([this]() { m_on_stop_success_callback(m_server_ref); });
+            }
+            else
+            {
+                m_on_stop_success_callback(m_server_ref);
+            }
+        }
+
+        void set_on_stop_success(const server_stop_success_callback& stop_success_callback)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_stop_success_callback = stop_success_callback;
+        }
+
+        void set_on_stop_success_async(bool async)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_stop_success_is_async = async;
+        }
+
+        void on_stop_error(const boost::system::error_code ec)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+
+            if (m_on_stop_error_callback == nullptr)
+            {
+                return;
+            }
+            else if (m_on_stop_error_is_async)
+            {
+                m_pool.push([this, ec]() { m_on_stop_error_callback(m_server_ref, ec); });
+            }
+            else
+            {
+                m_on_stop_error_callback(m_server_ref, ec);
+            }
+        }
+
+        void set_on_stop_error(const server_stop_error_callback& stop_error_callback)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_stop_error_callback = stop_error_callback;
+        }
+
+        void set_on_stop_error_async(bool async)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_stop_error_is_async = async;
+        }
+
+        void on_connection(shared_abstract_connection& client)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+
+            if (m_on_connection_callback == nullptr)
+            {
+                return;
+            }
+            else if (m_on_connection_is_async)
+            {
+                m_pool.push([this, &client]() { m_on_connection_callback(m_server_ref, client); });
+            }
+            else
+            {
+                m_on_connection_callback(m_server_ref, client);
+            }
+        }
+
+        void set_on_connection(const server_on_connection_callback& on_connection_callback)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_connection_callback = on_connection_callback;
+        }
+
+        void set_on_connection_async(bool async)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_connection_is_async = async;
+        }
+
+        void on_sent(shared_abstract_connection& client, const size_t sent_bytes)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+
+            if (m_on_sent_callback == nullptr)
+            {
+                return;
+            }
+            else if (m_on_sent_is_async)
+            {
+                m_pool.push([this, &client, sent_bytes]() { m_on_sent_callback(m_server_ref, client, sent_bytes); });
+            }
+            else
+            {
+                m_on_sent_callback(m_server_ref, client, sent_bytes);
+            }
+        }
+
+        void set_on_sent(const server_on_sent_callback& on_sent_callback)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_sent_callback = on_sent_callback;
+        }
+
+        void set_on_sent_async(bool async)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_sent_is_async = async;
+        }
+
+        void on_send_error(shared_abstract_connection& client, const boost::system::error_code ec, const size_t sent_bytes)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+
+            if (m_on_send_error_callback == nullptr)
+            {
+                return;
+            }
+            else if (m_on_send_error_is_async)
+            {
+                m_pool.push([this, &client, ec, sent_bytes]() { m_on_send_error_callback(m_server_ref, client, ec, sent_bytes); });
+            }
+            else
+            {
+                m_on_send_error_callback(m_server_ref, client, ec, sent_bytes);
+            }
+        }
+
+        void set_on_send_error(const server_on_send_error_callback& on_send_error_callback)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_send_error_callback = on_send_error_callback;
+        }
+
+        void set_on_send_error_async(bool async)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_send_error_is_async = async;
+        }
+
+        void on_receive(shared_abstract_connection& client, shared_buffer_t& buffer_copy, const size_t recv_bytes)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+
+            if (m_on_receive_callback == nullptr)
+            {
+                return;
+            }
+            else if (m_on_receive_is_async)
+            {
+                m_pool.push([this, &client, buffer_copy, recv_bytes]() { m_on_receive_callback(m_server_ref, client, buffer_copy, recv_bytes); });
+            }
+            else
+            {
+                m_on_receive_callback(m_server_ref, client, buffer_copy, recv_bytes);
+            }
+        }
+
+        void set_on_receive(const server_on_receive_callback& on_receive_callback)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_receive_callback = on_receive_callback;
+        }
+
+        void set_on_receive_async(bool async)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_receive_is_async = async;
+        }
+
+        void on_receive_error(shared_abstract_connection& client, shared_buffer_t& buffer_copy, const boost::system::error_code ec, const size_t recv_bytes)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+
+            if (m_on_receive_error_callback == nullptr)
+            {
+                return;
+            }
+            else if (m_on_receive_error_is_async)
+            {
+                m_pool.push([this, &client, buffer_copy, ec, recv_bytes]() { m_on_receive_error_callback(m_server_ref, client, buffer_copy, ec, recv_bytes); });
+            }
+            else
+            {
+                m_on_receive_error_callback(m_server_ref, client, buffer_copy, ec, recv_bytes);
+            }
+        }        
+
+        void set_on_receive_error(const server_on_receive_error_callback& on_receive_error_callback)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_receive_error_callback = on_receive_error_callback;
+        }
+
+        void set_on_receive_error_async(bool async)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_receive_error_is_async = async;
+        }
+
+        void on_receive_success(shared_abstract_connection& client, shared_buffer_t& buffer_copy, const size_t recv_bytes)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+
+            if (m_on_receive_success_callback == nullptr)
+            {
+                return;
+            }
+            else if (m_on_receive_success_is_async)
+            {
+                m_pool.push([this, &client, buffer_copy, recv_bytes]() { m_on_receive_success_callback(m_server_ref, client, buffer_copy, recv_bytes); });
+            }
+            else
+            {
+                m_on_receive_success_callback(m_server_ref, client, buffer_copy, recv_bytes);
+            }
+        }
+
+        void set_on_receive_success(const server_on_receive_success_callback& on_receive_success_callback)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_receive_success_callback = on_receive_success_callback;
+        }
+
+        void set_on_receive_success_async(bool async)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_on_receive_success_is_async = async;
+        }
+
+    public:
+        server_callback_register(base_abstract_server_unwrapped& server)
+            : m_server_ref(server)
+            , m_pool(true)
+            , m_on_start_success_callback(nullptr)
+            , m_on_start_success_is_async(false)
+            , m_on_start_error_callback(nullptr)
+            , m_on_start_error_is_async(false)
+            , m_on_stop_success_callback(nullptr)
+            , m_on_stop_success_is_async(false)
+            , m_on_stop_error_callback(nullptr)
+            , m_on_stop_error_is_async(false)
+            , m_on_connection_callback(nullptr)
+            , m_on_connection_is_async(false)
+            , m_on_sent_callback(nullptr)
+            , m_on_sent_is_async(false)
+            , m_on_send_error_callback(nullptr)
+            , m_on_send_error_is_async(false)
+            , m_on_receive_callback(nullptr)
+            , m_on_receive_is_async(false)
+            , m_on_receive_error_callback(nullptr)
+            , m_on_receive_error_is_async(false)
+            , m_on_receive_success_callback(nullptr)
+            , m_on_receive_success_is_async(false)
+            , m_mutex()
+        {}
+    };
+
+    class base_abstract_connection_unwrapped : public std::enable_shared_from_this<base_abstract_connection_unwrapped>
+    {
+    public:
+        virtual void stop() = 0;
+        virtual bool send(const shared_buffer_t &buffer, const size_t &size) = 0;
+
+    private:
+        server_callback_register &m_callback_register;
+        shared_buffer_t m_receive_buffer;
+
+    protected:
+        std::string m_alias;
+        mutable std::mutex m_alias_mutex;
+
+        std::atomic<client_id_t> m_id;
+        std::atomic_bool m_healthy;
+        std::atomic_bool m_running;
+
+        shared_abstract_connection as_shared()
+        {
+            return shared_from_this();
+        }
+
+        shared_buffer_t receive_buffer()
+        {
+            return m_receive_buffer;
+        }
+    
+    public:
+        server_callback_register& callbacks()
+        {
+            return m_callback_register;
+        }
+
+        std::string get_alias() const
+        {
+            std::lock_guard<std::mutex> lock(m_alias_mutex);
+            return m_alias;
+        }
+
+        void set_alias(const std::string &alias)
+        {
+            const std::string alias_copy = get_alias();
+            std::lock_guard<std::mutex> lock(m_alias_mutex);
+            SPDLOG_INFO("Set alias for connection: {} to: {}", alias_copy, alias);
+            m_alias = alias;
+        }
+
+        void set_id(const client_id_t &id)
+        {
+            SPDLOG_INFO("Set id for connection: {} to: {}", id, get_alias());
+            m_id = id;
+        }
+
+        client_id_t get_id() const
+        {
+            return m_id;
+        }
+
+        inline bool connected() const
+        {
+            return get_id() != invalid_client_id;
+        }
+
+        void set_connect_status(const bool status)
+        {
+            m_running = status;
+        }
+
+        inline bool is_running() const
+        {
+            return m_running && connected();
+        }
+
+        void set_run_status(const bool status)
+        {
+            m_running = status;
+        }
+
+        inline bool healthy() const
+        {
+            return m_healthy && is_running();
+        }
+
+        void set_health_status(const bool status)
+        {
+            m_healthy = status;
+        }
+
+    private:
+        void _cleanup()
+        {
+            if (is_running())
+            {
+                stop();
+            }
+        }
+
+    public:
+        base_abstract_connection_unwrapped(server_callback_register &callback_register)
+            : m_callback_register(callback_register)
+            , m_receive_buffer(make_shared_buffer())
+            , m_alias("no-name")
+            , m_alias_mutex()
+            , m_id(invalid_client_id)
+            , m_healthy(false)
+            , m_running(false)
+        {
+            SPDLOG_INFO("Creating base_abstract_connection_unwrapped: {}", get_alias());
+        }
+
+        virtual ~base_abstract_connection_unwrapped()
+        {
+            SPDLOG_INFO("Destroying base_abstract_connection_unwrapped: {}", get_alias());
+            _cleanup();
+            SPDLOG_INFO("Destroyed base_abstract_connection_unwrapped: {}", get_alias());
+        }
+    };
+
+    template<class Protocol>
+    class base_connection_unwrapped : public base_abstract_connection_unwrapped
+    {
+    private:
+        typename Protocol::socket m_socket;
+
+        void _receive_async() override final
+        {
+            if (!healthy())
+            {
+                SPDLOG_WARN("Connection is not healthy: {} may be either disconnected or received a non-recoverable error", get_alias());
+                return;
+            }
+
+            SPDLOG_INFO("Start reading for connection: {}", get_id());
+
+            auto &buffer = *receive_buffer();
+            m_socket.async_receive(
+                boost::asio::buffer(buffer),
+                [this, buffer](const boost::system::error_code &ec, size_t bytes_transferred)
+                {
+                    auto buffer_cpy = make_shared_buffer(buffer, bytes_transferred);
+                    auto connection = as_shared();
+
+                    SPDLOG_INFO("Received {} bytes for connection: {}", bytes_transferred, get_id());
+                    if (ec)
+                    {
+                        SPDLOG_ERROR("Error on receive for connection: {} with error: {}", get_id(), ec.message());
+                        switch (ec.value())
+                        {
+                        case boost::asio::error::eof:
+                        case boost::asio::error::connection_reset:
+                        case boost::asio::error::connection_aborted:
+                        case boost::asio::error::operation_aborted:
+                        case boost::asio::error::broken_pipe:
+                        case boost::asio::error::not_connected:
+                        case boost::asio::error::bad_descriptor:
+                        case boost::asio::error::fault:
+                        case boost::asio::error::host_not_found:
+                        // case boost::asio::error::host_not_found_try_again: == ::eof
+                        case boost::asio::error::host_unreachable:
+                        case boost::asio::error::network_down:
+                        case boost::asio::error::network_reset:
+                        case boost::asio::error::network_unreachable:
+                        case boost::asio::error::no_recovery:
+                            SPDLOG_ERROR("Connection cannot receive data: {} due to {}, stopping receive, considered not healthy!", get_id(), ec.message());
+                            this->set_health_status(false);
+                        default:
+                            break;
+                        }
+                        this->callbacks().on_receive_error(connection, buffer_cpy, ec, bytes_transferred);
+                    }
+                    else
+                    {
+                        this->callbacks().on_receive(connection, buffer_cpy, bytes_transferred);
+                    }
+
+                    if (!healthy())
+                    {
+                        SPDLOG_INFO("Connection not healthy: {} stopping reading", get_id());
+                        return;
+                    }
+
+                    _receive_async();
+                }
+            );
+        }
+
+    public:
+        base_connection_unwrapped(boost::asio::io_service &io_service, server_callback_register &callback_register)
+            : base_abstract_connection_unwrapped(callback_register)
+            , m_socket(io_service)
+        {
+            SPDLOG_INFO("Creating shared_abstract_connection: {}", get_id());
+            set_run_status(true);
+            set_health_status(true);
+            _receive_async();
+        }
+
+        virtual ~base_connection_unwrapped() = default;
+
+        void stop() override final
+        {
+            if (!is_running())
+            {
+                SPDLOG_INFO("Connection already stopped: {}", get_id());
+                return;
+            }
+            SPDLOG_INFO("Stopping connection: {}", get_id());
+            set_run_status(false);
+            set_health_status(false);
+            m_socket.close();
+            SPDLOG_INFO("Stopped connection: {}", get_id());
+        }
+
+        bool send(const shared_buffer_t &buffer, const size_t &size) override final
+        {
+            SPDLOG_INFO("Sending {} bytes to connection: {}", size, get_id());
+
+            if (!healthy())
+            {
+                SPDLOG_ERROR("Cannot send data to a non-healthy connection: {}", get_id());
+                return false;
+            }
+            else if (!size)
+            {
+                SPDLOG_ERROR("Cannot send 0 bytes to the connection: {}", get_id());
+                return false;
+            }
+            else if (!buffer)
+            {
+                SPDLOG_ERROR("Cannot send data from a null buffer connection: {}", get_id());
+                return false;
+            }
+            else if (size > buffer->size())
+            {
+                SPDLOG_ERROR("Cannot send more than the buffer size: {} bytes from connection: {}", buffer->size(), get_id());
+                return false;
+            }
+
+            m_socket.async_send(
+                boost::asio::buffer(*buffer, size),
+                [this, buffer](const boost::system::error_code &ec, const size_t bytes_transferred)
+                {
+                    auto connexion = this->as_shared();
+                    if (ec)
+                    {
+                        SPDLOG_ERROR("Error on send for connection: {} with error: {}", get_id(), ec.message());
+                        this->callbacks().on_send_error(connexion, ec, bytes_transferred);
+                        switch (ec.value())
+                        {
+                        case boost::asio::error::eof:
+                        case boost::asio::error::connection_reset:
+                        case boost::asio::error::connection_aborted:
+                        case boost::asio::error::operation_aborted:
+                        case boost::asio::error::broken_pipe:
+                        case boost::asio::error::not_connected:
+                        case boost::asio::error::bad_descriptor:
+                        case boost::asio::error::fault:
+                        case boost::asio::error::host_not_found:
+                        // case boost::asio::error::host_not_found_try_again: == ::eof
+                        case boost::asio::error::host_unreachable:
+                        case boost::asio::error::network_down:
+                        case boost::asio::error::network_reset:
+                        case boost::asio::error::network_unreachable:
+                        case boost::asio::error::no_recovery:
+                            SPDLOG_ERROR("Connection cannot send data: {} due to {}, stopping send, considered not healthy!", get_id(), ec.message());
+                            this->set_health_status(false);
+                        default:
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        SPDLOG_INFO("Sent {} bytes to connection: {}", bytes_transferred, get_id());
+                        this->callbacks().on_sent(connexion, bytes_transferred);
+                    }
+                }
+            );
+
+            SPDLOG_INFO("Sent {} bytes to connection: {}", size, get_id());
+            return true;
+        }
+    };
+
+    using shared_base_abstract_server_unwrapped = std::shared_ptr<base_abstract_server_unwrapped>;
+
+    class base_abstract_server_unwrapped : public std::enable_shared_from_this<base_abstract_server_unwrapped>
+    {
+    private:
+        server_callback_register m_callback_register;
+
+        std::string m_alias;
+        mutable std::mutex m_alias_mutex;
+
+    public:
+        server_callback_register& callbacks()
+        {
+            return m_callback_register;
+        }
+
+        const std::string get_alias() const
+        {
+            std::lock_guard<std::mutex> lock(m_alias_mutex);
+            return m_alias;
+        }
+
+        void set_alias(const std::string &alias)
+        {
+            const std::string alias_copy = get_alias();
+            std::lock_guard<std::mutex> lock(m_alias_mutex);
+            SPDLOG_INFO("Set alias for server: {} to: {}", alias_copy, alias);
+            m_alias = alias;
+        }
+
+    public:
+        virtual bool start(const std::string &host, const std::string &port) = 0;
+        virtual void stop() = 0;
+        virtual bool send(const client_id_t& client_id, const shared_buffer_t &buffer, const size_t &size) = 0;
+
+        base_abstract_server_unwrapped()
+            : m_callback_register(*this)
+            , m_alias("no-name")
+            , m_alias_mutex()
+        {
+            SPDLOG_INFO("Creating base_abstract_server_unwrapped: {}", get_alias());
+        }
+    
+    public:
+        bool send(const client_id_t& client_id, const shared_buffer_t &buffer)
+        {
+            return send(client_id, buffer, buffer->size());
+        }
+
+        bool send_bytes(const void *data, const size_t &size)
+        {
+            auto buffer = make_shared_buffer();
+            const size_t max_size = std::min(size, buffer->size());
+            const byte* data_ptr = static_cast<const byte *>(data);
+
+            std::copy(data_ptr, data_ptr + max_size, buffer->begin());
+            return send(invalid_client_id, buffer, size);
+        }
+
+        bool send_string(const std::string &str)
+        {
+            return send_bytes(static_cast<const void *>(str.c_str()), str.size());
+        }
+
+        template<typename T>
+        bool send_vec(const std::vector<T> &data)
+        {
+            return send_bytes(static_cast<const void *>(data.data()), data.size() * sizeof(T));
+        }
+
+        template<typename T>
+        bool send_vec(const std::vector<T> &data, const size_t size)
+        {
+            return send_bytes(static_cast<const void *>(data.data()), size * sizeof(T));
+        }
+
+        virtual ~base_abstract_server_unwrapped() = default;
+    };
 }
 }
