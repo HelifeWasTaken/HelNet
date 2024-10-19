@@ -696,9 +696,10 @@
 #include <queue>
 
 // TODO: Documentation
-
 // TODO: Logging for all callbacks set and call / call error
 // TODO: Make separate service for UDP (or simulate acceptors that always returns true?) Or should it be completely separated (More duplicate code)
+// TODO: Enforce use of (this) keyword in all classes for readability
+// TODO: Change unordered_map and queue to use custom containers from hl::silva::collections::thread_safe instead of std and lock_guard
 
 namespace hl
 {
@@ -708,6 +709,8 @@ namespace net
 #ifndef HL_NET_BUFFER_SIZE
 #define HL_NET_BUFFER_SIZE 1024
 #endif
+
+namespace logger = spdlog;
 
 #define HL_NET_LOG_LEVEL_DEBUG    1
 #define HL_NET_LOG_LEVEL_INFO     2
@@ -722,6 +725,8 @@ namespace net
 #define HL_NET_LOG_ERROR(...)       SPDLOG_ERROR(__VA_ARGS__)
 #define HL_NET_LOG_CRITICAL(...)    SPDLOG_CRITICAL(__VA_ARGS__)
 
+#define HL_NET_LOG_LEVEL_INTERNAL   (hl::net::logger::level::level_enum::debug)
+
 #if defined(HL_NET_LOG_LEVEL)
     #if (HL_NET_LOG_LEVEL < HL_NET_LOG_LEVEL_DEBUG) || (HL_NET_LOG_LEVEL > HL_NET_LOG_LEVEL_CRITICAL)
         #error "HL_NET_LOG_LEVEL must be between HL_NET_LOG_LEVEL_DEBUG and HL_NET_LOG_LEVEL_CRITICAL (Debug: 1, Info: 2, Warn: 3, Error: 4, Critical: 5, None: 6)"
@@ -735,27 +740,53 @@ namespace net
 #if HL_NET_LOG_LEVEL > HL_NET_LOG_LEVEL_DEBUG
     #undef HL_NET_LOG_DEBUG
     #define HL_NET_LOG_DEBUG(...)
+    #undef HL_NET_LOG_LEVEL_INTERNAL
+    #define HL_NET_LOG_LEVEL_INTERNAL (hl::net::logger::level::level_enum::info)
 #endif
 
 #if HL_NET_LOG_LEVEL > HL_NET_LOG_LEVEL_INFO
     #undef HL_NET_LOG_INFO
     #define HL_NET_LOG_INFO(...)
+    #undef HL_NET_LOG_LEVEL_INTERNAL
+    #define HL_NET_LOG_LEVEL_INTERNAL (hl::net::logger::level::level_enum::warn)
 #endif
 
 #if HL_NET_LOG_LEVEL > HL_NET_LOG_LEVEL_WARN
     #undef HL_NET_LOG_WARN
     #define HL_NET_LOG_WARN(...)
+    #undef HL_NET_LOG_LEVEL_INTERNAL
+    #define HL_NET_LOG_LEVEL_INTERNAL (hl::net::logger::level::level_enum::error)
 #endif
 
 #if HL_NET_LOG_LEVEL > HL_NET_LOG_LEVEL_ERROR
     #undef HL_NET_LOG_ERROR
     #define HL_NET_LOG_ERROR(...)
+    #undef HL_NET_LOG_LEVEL_INTERNAL
+    #define HL_NET_LOG_LEVEL_INTERNAL (hl::net::logger::level::level_enum::critical)
 #endif
 
 #if HL_NET_LOG_LEVEL > HL_NET_LOG_LEVEL_CRITICAL
     #undef HL_NET_LOG_CRITICAL
     #define HL_NET_LOG_CRITICAL(...)
+    #undef HL_NET_LOG_LEVEL_INTERNAL
+    #define HL_NET_LOG_LEVEL_INTERNAL (hl::net::logger::level::level_enum::off)
 #endif
+
+#define HL_NET_SETUP_LOG_LEVEL() hl::net::logger::set_level(HL_NET_LOG_LEVEL_INTERNAL)
+
+    namespace __internal {
+
+        struct __hl_net_setup {
+            __hl_net_setup()
+            {
+                HL_NET_SETUP_LOG_LEVEL();
+            }
+        };
+
+#if defined(HL_NET_AUTO_SETUP_SERVICE)
+        static const __hl_net_setup_service; // Create a global object so the constructor is called before main
+#endif
+    }
 
     using byte = uint8_t;
 
@@ -817,6 +848,8 @@ namespace net
     using basic_enable_shared_from_this = std::enable_shared_from_this<T>;
 
     using meta_non_copy_moveable = hl::silva::collections::meta::NonCopyMoveable;
+    using basic_thread_pool = hl::silva::collections::threads::basic_pool;
+    using basic_async_thread_pool = hl::silva::collections::threads::basic_pool_async;
 
     template<typename T>
     using basic_numeric_limits = std::numeric_limits<T>;
@@ -891,7 +924,7 @@ namespace net
     {
     private:
         base_abstract_client_unwrapped& m_client_ref;
-        hl::silva::collections::threads::basic_pool_async m_pool;
+        basic_async_thread_pool m_pool;
 
     private:
         client_on_connect_callback          m_on_connect_callback;
@@ -1592,7 +1625,7 @@ namespace net
     using udp_client_unwrapped = base_client_unwrapped<asio_udp>;
 
     template<class Protocol>
-    class client_wrapper : public hl::silva::collections::meta::NonCopyMoveable
+    class client_wrapper : public meta_non_copy_moveable
     {
     private:
         typename Protocol::shared_t m_shared_client;
@@ -1727,11 +1760,11 @@ namespace net
     using server_on_receive_callback                = basic_function<void(base_abstract_server_unwrapped& server, shared_abstract_connection client, shared_buffer_t buffer_copy, const size_t recv_bytes)>;
     using server_on_receive_error_callback          = basic_function<void(base_abstract_server_unwrapped& server, shared_abstract_connection client, shared_buffer_t buffer_copy, const boost_system_error_code ec, const size_t recv_bytes)>;
 
-    class server_callback_register : public hl::silva::collections::meta::NonCopyMoveable
+    class server_callback_register : public meta_non_copy_moveable
     {
     private:
         base_abstract_server_unwrapped& m_server_ref;
-        hl::silva::collections::threads::basic_pool_async m_pool;
+        basic_async_thread_pool m_pool;
         
     private:
         server_start_success_callback       m_on_start_success_callback;
@@ -2907,7 +2940,7 @@ namespace net
     // using asio_udp_server_unwrapped = tcp_server_unwrapped<asio_udp>;
 
     template<class Protocol>
-    class server_wrapper : public hl::silva::collections::meta::NonCopyMoveable
+    class server_wrapper : public meta_non_copy_moveable
     {
     private:
         typename Protocol::shared_t m_shared_server;

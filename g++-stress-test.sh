@@ -50,4 +50,4 @@
      \
      -DDEBUG \
      \
-	 main.cpp 2>&1
+	 example.cpp -o example 2>&1
