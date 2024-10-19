@@ -784,7 +784,7 @@ namespace logger = spdlog;
         };
 
 #if defined(HL_NET_AUTO_SETUP_SERVICE)
-        static const __hl_net_setup_service; // Create a global object so the constructor is called before main
+        static const __hl_net_setup __hl_net_setup_service; // Create a global object so the constructor is called before main
 #endif
     }
 
