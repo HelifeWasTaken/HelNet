@@ -697,9 +697,12 @@
 
 // TODO: Documentation
 // TODO: Logging for all callbacks set and call / call error
-// TODO: Make separate service for UDP (or simulate acceptors that always returns true?) Or should it be completely separated (More duplicate code)
 // TODO: Enforce use of (this) keyword in all classes for readability
-// TODO: Change unordered_map and queue to use custom containers from hl::silva::collections::thread_safe instead of std and lock_guard
+// TODO: Change unordered_map and queue to use custom containers from hl::silva::collections::thread_safe instead of std library
+// TODO: Troughly test again TCP and UDP clients and servers
+// TODO: Should i stop using spdlog and make a custom logger to avoid depending on a library ?
+// TODO: Modify hl::silva::collections so it compiles with c++14 or less (only compiles with c++17>= for now)
+// TODO: Should i change the buffer_t to a std::vector<byte> instead of a std::array<byte, HL_NET_BUFFER_SIZE> ?
 
 namespace hl
 {
