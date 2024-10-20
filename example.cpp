@@ -122,8 +122,7 @@ int main(int argc, char **argv)
         if (protocol == "tcp") {
             server_routine<hl::net::tcp_server>(port);
         } else {
-            std::cerr << "UDP not implmeneted yet for listening" << std::endl;
-            return 2;
+            server_routine<hl::net::udp_server>(port);
         }
     } else if (mode == "connect") {
         protocol == "tcp" ? client_routine<hl::net::tcp_client>(host, port) : client_routine<hl::net::udp_client>(host, port);
