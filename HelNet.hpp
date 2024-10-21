@@ -878,12 +878,14 @@ namespace logger = spdlog;
 
     static inline shared_buffer_t make_shared_buffer()
     {
-        return shared_buffer_t(new buffer_t);
+        buffer_t *buffer = new buffer_t();
+        std::fill(buffer->begin(), buffer->end(), 0);
+        return shared_buffer_t(buffer);
     }
 
     static inline shared_buffer_t make_shared_buffer(const byte *data, size_t size)
     {
-        shared_buffer_t shared_buffer = make_shared_buffer();
+        shared_buffer_t shared_buffer(new buffer_t());
         std::copy(data, data + std::min(size, shared_buffer->size()), shared_buffer->begin());
         return shared_buffer;
     }
@@ -1691,7 +1693,7 @@ namespace logger = spdlog;
             callbacks.set_on_connect([](base_abstract_client_unwrapped& client) { HL_NET_LOG_INFO("Client connected: {}", client.get_alias()); });
             callbacks.set_on_connect_error([](base_abstract_client_unwrapped& client, const boost_system_error_code ec) { HL_NET_LOG_ERROR("Client connect error: {} - {}", client.get_alias(), ec.message()); });
             callbacks.set_on_disconnect([](base_abstract_client_unwrapped& client) { HL_NET_LOG_INFO("Client disconnected: {}", client.get_alias()); });
-            callbacks.set_on_disconnect_error([](base_abstract_client_unwrapped& client, const boost_system_error_code ec) { HL_NET_LOG_ERROR("Client disconnect error: {} - {}", client.get_alias(), ec.message()); });
+            callbacks.set_on_disconnect_error([this](const boost_system_error_code ec) { HL_NET_LOG_ERROR("Client disconnect error: {} - {}", this->get_alias(), ec.message()); });
             callbacks.set_on_receive([](base_abstract_client_unwrapped& client, shared_buffer_t, const size_t recv_bytes) { HL_NET_LOG_INFO("Client received: {} - {}", client.get_alias(), recv_bytes); });
             callbacks.set_on_receive_error([](base_abstract_client_unwrapped& client, shared_buffer_t, const boost_system_error_code ec, const size_t recv_bytes) { HL_NET_LOG_ERROR("Client receive error: {} - {} - {}", client.get_alias(), ec.message(), recv_bytes); });
             callbacks.set_on_sent([](base_abstract_client_unwrapped& client, const size_t sent_bytes) { HL_NET_LOG_INFO("Client sent: {} - {}", client.get_alias(), sent_bytes); });
@@ -1989,7 +1991,7 @@ namespace logger = spdlog;
             m_on_stop_error_is_async = async;
         }
 
-        void on_connection(shared_abstract_connection& client)
+        void on_connection(shared_abstract_connection client)
         {
             basic_lock_guard lock(m_mutex);
 
@@ -1999,7 +2001,7 @@ namespace logger = spdlog;
             }
             else if (m_on_connection_is_async)
             {
-                m_pool.push([this, &client]() { m_on_connection_callback(m_server_ref, client); });
+                m_pool.push([this, client]() { m_on_connection_callback(m_server_ref, client); });
             }
             else
             {
@@ -2059,7 +2061,7 @@ namespace logger = spdlog;
             }
             else if (m_on_disconnection_is_async)
             {
-                m_pool.push([this, &client]() { m_on_disconnection_callback(m_server_ref, client); });
+                m_pool.push([this, client]() { m_on_disconnection_callback(m_server_ref, client); });
             }
             else
             {
@@ -2109,7 +2111,7 @@ namespace logger = spdlog;
             m_on_disconnection_error_is_async = async;
         }
 
-        void on_sent(shared_abstract_connection& client, const size_t sent_bytes)
+        void on_sent(shared_abstract_connection client, const size_t sent_bytes)
         {
             basic_lock_guard lock(m_mutex);
 
@@ -2119,7 +2121,7 @@ namespace logger = spdlog;
             }
             else if (m_on_sent_is_async)
             {
-                m_pool.push([this, &client, sent_bytes]() { m_on_sent_callback(m_server_ref, client, sent_bytes); });
+                m_pool.push([this, client, sent_bytes]() { m_on_sent_callback(m_server_ref, client, sent_bytes); });
             }
             else
             {
@@ -2139,7 +2141,7 @@ namespace logger = spdlog;
             m_on_sent_is_async = async;
         }
 
-        void on_send_error(shared_abstract_connection& client, const boost_system_error_code ec, const size_t sent_bytes)
+        void on_send_error(shared_abstract_connection client, const boost_system_error_code ec, const size_t sent_bytes)
         {
             basic_lock_guard lock(m_mutex);
 
@@ -2149,7 +2151,7 @@ namespace logger = spdlog;
             }
             else if (m_on_send_error_is_async)
             {
-                m_pool.push([this, &client, ec, sent_bytes]() { m_on_send_error_callback(m_server_ref, client, ec, sent_bytes); });
+                m_pool.push([this, client, ec, sent_bytes]() { m_on_send_error_callback(m_server_ref, client, ec, sent_bytes); });
             }
             else
             {
@@ -2169,7 +2171,7 @@ namespace logger = spdlog;
             m_on_send_error_is_async = async;
         }
 
-        void on_receive(shared_abstract_connection& client, shared_buffer_t& buffer_copy, const size_t recv_bytes)
+        void on_receive(shared_abstract_connection client, shared_buffer_t& buffer_copy, const size_t recv_bytes)
         {
             basic_lock_guard lock(m_mutex);
 
@@ -2179,7 +2181,7 @@ namespace logger = spdlog;
             }
             else if (m_on_receive_is_async)
             {
-                m_pool.push([this, &client, buffer_copy, recv_bytes]() { m_on_receive_callback(m_server_ref, client, buffer_copy, recv_bytes); });
+                m_pool.push([this, client, buffer_copy, recv_bytes]() { m_on_receive_callback(m_server_ref, client, buffer_copy, recv_bytes); });
             }
             else
             {
@@ -2199,7 +2201,7 @@ namespace logger = spdlog;
             m_on_receive_is_async = async;
         }
 
-        void on_receive_error(shared_abstract_connection& client, shared_buffer_t& buffer_copy, const boost_system_error_code ec, const size_t recv_bytes)
+        void on_receive_error(shared_abstract_connection client, shared_buffer_t& buffer_copy, const boost_system_error_code ec, const size_t recv_bytes)
         {
             basic_lock_guard lock(m_mutex);
 
@@ -2209,7 +2211,7 @@ namespace logger = spdlog;
             }
             else if (m_on_receive_error_is_async)
             {
-                m_pool.push([this, &client, buffer_copy, ec, recv_bytes]() { m_on_receive_error_callback(m_server_ref, client, buffer_copy, ec, recv_bytes); });
+                m_pool.push([this, client, buffer_copy, ec, recv_bytes]() { m_on_receive_error_callback(m_server_ref, client, buffer_copy, ec, recv_bytes); });
             }
             else
             {
@@ -2568,7 +2570,7 @@ namespace logger = spdlog;
             HL_NET_LOG_INFO("Sending {} bytes to connection: {}", size, get_alias());
             m_socket.async_send(
                 asio_buffer(*buffer, size),
-                [this, buffer, &connexion](const boost_system_error_code &ec, const size_t bytes_transferred)
+                [this, buffer, connexion](const boost_system_error_code &ec, const size_t bytes_transferred)
                 {
                     HL_NET_LOG_DEBUG("Sent {} bytes to connection: {}", bytes_transferred, get_alias());
                     if (ec)
@@ -2639,6 +2641,7 @@ namespace logger = spdlog;
 
         void set_run_status(const bool status)
         {
+            HL_NET_LOG_WARN("Server: {} is now {}", get_alias(), status ? "running" : "stopped");
             m_running = status;
         }
 
@@ -2649,6 +2652,7 @@ namespace logger = spdlog;
 
         void set_health_status(const bool status)
         {
+            HL_NET_LOG_WARN("Server: {} health is now {}", get_alias(), status ? "healthy" : "unhealthy");
             m_healthy = status;
         }
 
@@ -2960,6 +2964,8 @@ namespace logger = spdlog;
                     m_connections.clear();
                 }
 
+                set_health_status(true);
+
                 m_io_service_thread = basic_thread(
                 [this]()
                 {
@@ -2998,7 +3004,6 @@ namespace logger = spdlog;
                     HL_NET_LOG_WARN("Stopping unhealthy connections thread for server (unhealthy or disconnected): {}", get_alias());
                 });
 
-                set_health_status(true);
                 callbacks_register.on_start_success();
             }
 
@@ -3199,7 +3204,7 @@ namespace logger = spdlog;
             m_socket.async_send_to(
                 asio_buffer(*buffer, size),
                 m_endpoint,
-                [this, buffer, &connexion](const boost_system_error_code &ec, const size_t bytes_transferred)
+                [this, buffer, connexion](const boost_system_error_code &ec, const size_t bytes_transferred)
                 {
                     HL_NET_LOG_DEBUG("Sent {} bytes to connection: {}", bytes_transferred, get_alias());
                     if (ec)
@@ -3431,7 +3436,7 @@ namespace logger = spdlog;
             , m_connections_mutex()
             , m_unhealthy_connections_mutex()
             , m_mutex_api_control_flow()
-            , m_receive_buffer()
+            , m_receive_buffer(make_shared_buffer())
         {
             HL_NET_LOG_DEBUG("Creating udp_server_unwrapped: {}", get_alias());
         }
@@ -3511,6 +3516,8 @@ namespace logger = spdlog;
                     m_connections_id_to_typename.clear();
                 }
 
+                set_health_status(true);
+
                 m_io_service_thread = basic_thread(
                 [this]()
                 {
@@ -3549,8 +3556,6 @@ namespace logger = spdlog;
                     }
                     HL_NET_LOG_WARN("Stopping unhealthy connections thread for server (unhealthy or disconnected): {}", get_alias());
                 });
-
-                set_health_status(true);
                 callbacks_register.on_start_success();
             }
 
@@ -3786,9 +3791,14 @@ namespace logger = spdlog;
             return m_server.send_vec(client_id, data);
         }
 
-        operator bool() const
+        bool healthy() const
         {
             return m_server.healthy();
+        }
+
+        operator bool() const
+        {
+            return healthy();
         }
     };
 

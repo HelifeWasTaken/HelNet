@@ -47,13 +47,14 @@ void server_routine(const std::string& port)
     Protocol server;
 
     if (server.start(port) == false) {
+        SPDLOG_CRITICAL("Failed to start server on port {}", port);
         return;
     }
 
     //(base_abstract_server_unwrapped& server, shared_abstract_connection client,
     // shared_buffer_t buffer_copy, const size_t recv_bytes)>;
 
-    std::atomic_bool run;
+    std::atomic_bool run = true;
 
     server.callbacks().set_on_receive([&run = run](
         hl::net::base_abstract_server_unwrapped&,
@@ -64,7 +65,7 @@ void server_routine(const std::string& port)
     {
         try {
             std::string str((const char*)(*data).data(), size);
-            if (str == "exit") {
+            if (str == "exit\n" || str == "exit\r\n" || str == "exit") {
                 HL_NET_LOG_CRITICAL("Received: exit - closing server...");
                 run = false;
                 return;
@@ -79,11 +80,13 @@ void server_routine(const std::string& port)
     });
     server.callbacks().set_on_receive_async(true);
 
-    while (server && run)
+    HL_NET_LOG_CRITICAL("Server health: {}, running: {}", server.healthy(), run.load());
+    while (server.healthy() && run)
     {
         // Sleep for a second to avoid 100% CPU usage (Will make the program wait for a second but it's fine for this example)
         std::this_thread::sleep_for(std::chrono::seconds(1)); 
     }
+    HL_NET_LOG_CRITICAL("Server closed");
 }
 
 int main(int argc, char **argv)
