@@ -93,7 +93,7 @@ int main(int argc, char **argv)
 {
     HL_NET_SETUP_LOG_LEVEL();
 
-    std::string port, mode = "connect", protocol = "tcp", host = "localhost";
+    std::string port, mode = "connect", protocol = "tcp", host = "0.0.0.0";
 
 #if __GNUC__ || __clang__
 #pragma GCC diagnostic push
@@ -111,7 +111,7 @@ int main(int argc, char **argv)
         port = argv[1];
         break;
     default:
-        std::cout << argv[0] << ": <port> [*connect|listen] [*tcp|udp] [host = localhost (ignored for listen)]" << std::endl;
+        std::cout << argv[0] << ": <port> [*connect|listen] [*tcp|udp] [host = 0.0.0.0 (ignored for listen)]" << std::endl;
         return 1;
     }
 #if __GNUC__ || __clang__

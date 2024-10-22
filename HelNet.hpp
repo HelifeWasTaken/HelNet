@@ -682,9 +682,11 @@
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/udp.hpp>
+#include <boost/asio/placeholders.hpp>
 
 #include <boost/endian/conversion.hpp>
 #include <boost/system/error_code.hpp>
+#include <boost/bind/bind.hpp>
 
 #undef SPDLOG_ACTIVE_LEVEL
 #define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_TRACE
@@ -715,12 +717,16 @@ namespace net
 
 namespace logger = spdlog;
 
-#define HL_NET_LOG_LEVEL_DEBUG    1
-#define HL_NET_LOG_LEVEL_INFO     2
-#define HL_NET_LOG_LEVEL_WARN     3
-#define HL_NET_LOG_LEVEL_ERROR    4
-#define HL_NET_LOG_LEVEL_CRITICAL 5
-#define HL_NET_LOG_LEVEL_NONE     6
+#define HL_NET_LOG_LEVEL_TRACE    1
+#define HL_NET_LOG_LEVEL_DEBUG    2
+#define HL_NET_LOG_LEVEL_INFO     3
+#define HL_NET_LOG_LEVEL_WARN     4
+#define HL_NET_LOG_LEVEL_ERROR    5
+#define HL_NET_LOG_LEVEL_CRITICAL 6
+#define HL_NET_LOG_LEVEL_NONE     7
+
+#define HL_NET_LOG_LEVEL_MIN      HL_NET_LOG_LEVEL_TRACE
+#define HL_NET_LOG_LEVEL_MAX      HL_NET_LOG_LEVEL_NONE
 
 #define HL_NET_LOG_DEBUG(...)       SPDLOG_DEBUG(__VA_ARGS__)
 #define HL_NET_LOG_INFO(...)        SPDLOG_INFO(__VA_ARGS__)
@@ -728,16 +734,23 @@ namespace logger = spdlog;
 #define HL_NET_LOG_ERROR(...)       SPDLOG_ERROR(__VA_ARGS__)
 #define HL_NET_LOG_CRITICAL(...)    SPDLOG_CRITICAL(__VA_ARGS__)
 
-#define HL_NET_LOG_LEVEL_INTERNAL   (hl::net::logger::level::level_enum::debug)
+#define HL_NET_LOG_LEVEL_INTERNAL   (hl::net::logger::level::level_enum::trace)
 
 #if defined(HL_NET_LOG_LEVEL)
-    #if (HL_NET_LOG_LEVEL < HL_NET_LOG_LEVEL_DEBUG) || (HL_NET_LOG_LEVEL > HL_NET_LOG_LEVEL_CRITICAL)
+    #if (HL_NET_LOG_LEVEL < HL_NET_LOG_LEVEL_MIN) || (HL_NET_LOG_LEVEL > HL_NET_LOG_LEVEL_MAX)
         #error "HL_NET_LOG_LEVEL must be between HL_NET_LOG_LEVEL_DEBUG and HL_NET_LOG_LEVEL_CRITICAL (Debug: 1, Info: 2, Warn: 3, Error: 4, Critical: 5, None: 6)"
     #endif
 #elif defined(DEBUG)
     #define HL_NET_LOG_LEVEL HL_NET_LOG_LEVEL_DEBUG
 #else
     #define HL_NET_LOG_LEVEL HL_NET_LOG_LEVEL_INFO
+#endif
+
+#if HL_NET_LOG_LEVEL > HL_NET_LOG_LEVEL_TRACE
+    #undef HL_NET_LOG_TRACE
+    #define HL_NET_LOG_TRACE(...)
+    #undef HL_NET_LOG_LEVEL_INTERNAL
+    #define HL_NET_LOG_LEVEL_INTERNAL (hl::net::logger::level::level_enum::debug)
 #endif
 
 #if HL_NET_LOG_LEVEL > HL_NET_LOG_LEVEL_DEBUG
@@ -786,7 +799,7 @@ namespace logger = spdlog;
             }
         };
 
-#if defined(HL_NET_AUTO_SETUP_SERVICE)
+#if defined(HL_NET_AUTO_SETUP_LOG_SERVICE)
         static const __hl_net_setup __hl_net_setup_service; // Create a global object so the constructor is called before main
 #endif
     }
@@ -869,6 +882,15 @@ namespace logger = spdlog;
     using asio_udp = boost::asio::ip::udp;
 
     static constexpr uint64_t MAX_CONNECTIONS = boost::asio::socket_base::max_connections;
+
+    #define _HL_INTERNAL_USE_WHEN_TCP(PROTOCOL, CODE) \
+        do { if constexpr (std::is_same<PROTOCOL, hl::net::asio_tcp>::value) { CODE } } while (0)
+
+    #define _HL_INTERNAL_USE_WHEN_UDP(PROTOCOL, CODE) \
+        do { if constexpr (std::is_same<PROTOCOL, hl::net::asio_udp>::value) { CODE } } while (0)
+
+    #define _HL_INTERNAL_LOCK_GUARD_WHEN_TRUE(CONDITION, LOCK_NAME, MUTEX, CODE) \
+        do { if (CONDITION) { std::lock_guard<std::mutex> LOCK_NAME(MUTEX); CODE } else { CODE } } while (0)
 
     template<typename ...Args>
     BOOST_ASIO_NODISCARD static inline boost::asio::BOOST_ASIO_MUTABLE_BUFFER asio_buffer(Args&&... args)
@@ -1277,7 +1299,7 @@ namespace logger = spdlog;
 
         shared_buffer_t receive_buffer()
         {
-            return m_receive_buffer;
+            return this->m_receive_buffer;
         }
 
     public:
@@ -1298,73 +1320,122 @@ namespace logger = spdlog;
     public:
         const basic_string get_alias() const
         {
-            basic_lock_guard lock(m_alias_mutex);
-            return basic_string(m_alias);
+            basic_lock_guard lock(this->m_alias_mutex);
+            return basic_string(this->m_alias);
         }
 
         void set_alias(const basic_string &alias)
         {
-            const basic_string alias_copy = get_alias();
-            basic_lock_guard lock(m_alias_mutex);
+            const basic_string alias_copy = this->get_alias();
+            basic_lock_guard lock(this->m_alias_mutex);
             HL_NET_LOG_INFO("Set alias for client: {} to: {}", alias_copy, alias);
-            m_alias = alias;
+            this->m_alias = alias;
         }
 
         virtual ~base_abstract_client_unwrapped()
         {
-            HL_NET_LOG_DEBUG("Destroying base_client_unwrapped: {}", get_alias());
-            HL_NET_LOG_DEBUG("Destroyed base_client_unwrapped: {}", get_alias());
+            HL_NET_LOG_DEBUG("Destroying base_client_unwrapped: {}", this->get_alias());
+            HL_NET_LOG_DEBUG("Destroyed base_client_unwrapped: {}", this->get_alias());
         }
 
         client_callback_register& callbacks()
         {
-            return m_callback_register;
+            return this->m_callback_register;
         }
 
         bool connected(void) const
         {
-            return m_connected;
+            return this->m_connected;
         }
 
         bool healthy(void) const
         {
-            return m_healthy && connected();
+            return this->m_healthy && this->connected();
         }
 
         void set_connect_status(const bool status)
         {
-            m_connected = status;
-            HL_NET_LOG_WARN("Client: {} connected status set to: {}", get_alias(), status);
+            this->m_connected = status;
+            HL_NET_LOG_WARN("Client: {} connected status set to: {}", this->get_alias(), status);
         }
 
         void set_health_status(const bool status)
         {
-            m_healthy = status;
-            HL_NET_LOG_WARN("Client: {} health status set to: {}", get_alias(), status);
+            this->m_healthy = status;
+            HL_NET_LOG_WARN("Client: {} health status set to: {}", this->get_alias(), status);
         }
 
         bool send(const shared_buffer_t &buffer)
         {
-            return send(buffer, buffer->size());
+            return this->send(buffer, buffer->size());
         }
 
         bool send_bytes(const byte *data, const size_t &size)
         {
             shared_buffer_t shared_buffer = make_shared_buffer(data, size);
-            return send(shared_buffer, size);
+            return this->send(shared_buffer, size);
+        }
+
+        template<typename T>
+        bool send_bytes(const basic_vector<T> &data)
+        {
+            return this->send_bytes(static_cast<const byte *>(data.data()), data.size() * sizeof(T));
         }
 
         bool send_string(const basic_string &str)
         {
-            return send_bytes(reinterpret_cast<const byte *>(str.c_str()), str.size());
-        }
-
-        template<typename T>
-        bool send_vec(const basic_vector<T> &data)
-        {
-            return send_bytes(static_cast<const byte *>(data.data()), data.size() * sizeof(T));
+            return this->send_bytes(reinterpret_cast<const byte *>(str.c_str()), str.size());
         }
     };
+
+    template<typename Protocol>
+    static inline void basic_io_service_coroutine(const Protocol& protocol, basic_io_service& io_service)
+    {
+        SPDLOG_WARN("Starting io_service coroutine for: {}", protocol.get_alias());
+        while (true)
+        {
+            io_service.run();
+            if (protocol.healthy() == false)
+            {
+                break;
+            }
+            io_service.stop();
+        }
+        SPDLOG_WARN("Stopping io_service coroutine for: {}", protocol.get_alias());
+    }
+
+    template<typename Protocol>
+    void unhealthy_thread_check_coroutine(
+        Protocol& protocol,
+        basic_condition_variable& cv,
+        basic_mutex& unhealthy_connexions_mutex, basic_mutex& connexions_mutex,
+        basic_queue<client_id_t>& unhealthy_connexions)
+    {
+        HL_NET_LOG_INFO("Starting unhealthy connections thread for server: {}", protocol.get_alias());
+        while (true)
+        {
+            basic_unique_lock lock_waiter(unhealthy_connexions_mutex);
+
+            // wait that unealthy connections are available or that the server is not healthy
+            cv.wait(lock_waiter, [&unhealthy_connexions, &protocol]() -> bool
+            {
+                return !unhealthy_connexions.empty() || !protocol.healthy();
+            });
+
+            if (!protocol.healthy())
+            {
+                break;
+            }
+            client_id_t endpoint_id;
+            {
+                basic_lock_guard lock_connections(connexions_mutex);
+                endpoint_id = unhealthy_connexions.front();
+                unhealthy_connexions.pop();
+            }
+            protocol.disconnect(endpoint_id);
+        }
+        HL_NET_LOG_WARN("Stopping unhealthy connections thread for server (unhealthy or disconnected): {}", protocol.get_alias());
+    }
 
     template<class Protocol>
     class base_client_unwrapped : public base_abstract_client_unwrapped
@@ -1373,103 +1444,113 @@ namespace logger = spdlog;
         using shared_t = basic_shared_ptr<base_client_unwrapped<Protocol>>;
         using this_type_t = base_client_unwrapped<Protocol>;
 
-        class connection_data 
+        struct connection_data 
         {
-        public:
             basic_io_service io_service;
-            basic_thread io_service_thread;
 
             typename Protocol::resolver resolver;
-            typename Protocol::resolver::iterator endpoint_iterator;
             typename Protocol::socket socket;
+            typename Protocol::resolver::iterator endpoint_iterator;
 
-            connection_data(const basic_string &host, const basic_string &port)
+            basic_thread io_service_thread;
+
+            connection_data()
                 : io_service()
-                , io_service_thread()
                 , resolver(io_service)
-                , endpoint_iterator(resolver.resolve({ host, port }))
                 , socket(io_service)
+                , endpoint_iterator()
+                , io_service_thread()
             {
             }
 
-            connection_data() = delete;
             connection_data(const connection_data &) = delete;
             connection_data &operator=(const connection_data &) = delete;
             connection_data(connection_data &&) = delete;
             connection_data &operator=(connection_data &&) = delete;
 
             ~connection_data() = default;
+
+            void resolve(const basic_string &host, const basic_string &port)
+            {
+                this->endpoint_iterator = this->resolver.resolve({ host, port });
+            }
         };
 
     private:
 
-        basic_unique_ptr<connection_data> m_connection_data;
+        connection_data m_connection_data;
         basic_mutex m_mutex_api_control_flow;
+
+        void _receive_async_callback(const boost_system_error_code& ec, const size_t &bytes_transferred, const shared_buffer_t &buffer)
+        {
+            shared_buffer_t buffer_cpy = make_shared_buffer(buffer, bytes_transferred);
+
+            HL_NET_LOG_DEBUG("Received {} bytes for client: {}", bytes_transferred, this->get_alias());
+            if (ec)
+            {
+                HL_NET_LOG_WARN("Error on receive for client: {} with error: {}", this->get_alias(), ec.message());
+                switch (ec.value())
+                {
+                case boost_asio_error::eof:
+                case boost_asio_error::connection_reset:
+                case boost_asio_error::connection_aborted:
+                case boost_asio_error::operation_aborted:
+                case boost_asio_error::broken_pipe:
+                case boost_asio_error::not_connected:
+                case boost_asio_error::bad_descriptor:
+                case boost_asio_error::fault:
+                case boost_asio_error::host_not_found:
+                // case boost_asio_error::host_not_found_try_again: == ::eof
+                case boost_asio_error::host_unreachable:
+                case boost_asio_error::network_down:
+                case boost_asio_error::network_reset:
+                case boost_asio_error::network_unreachable:
+                case boost_asio_error::no_recovery:
+                    HL_NET_LOG_ERROR("Client cannot connect: {} stopping reading due to {}, stopping read, considered not healthy!", this->get_alias(), ec.message());
+                    this->set_health_status(false);
+                default:
+                    break;
+                }
+                this->callbacks().on_receive_error(buffer_cpy, ec, bytes_transferred);
+            }
+            else
+            {
+                this->callbacks().on_receive(buffer_cpy, bytes_transferred);
+            }
+            this->_receive_async();
+        }
 
         void _receive_async()
         {
             basic_lock_guard lock_flow(m_mutex_api_control_flow);
 
-            if (!healthy())
+            if (this->healthy() == false)
             {
-                HL_NET_LOG_ERROR("Cannot read: client is not healthy: {} may be either disconnected or received a non-recoverable error", get_alias());
+                HL_NET_LOG_ERROR("Cannot read: client is not healthy: {} may be either disconnected or received a non-recoverable error", this->get_alias());
                 shared_buffer_t recv_buffer = this->receive_buffer();
-                callbacks().on_receive_error(recv_buffer, boost_asio_error::not_connected, 0);
+                this->callbacks().on_receive_error(recv_buffer, boost_asio_error::not_connected, 0);
                 return;
             }
 
             shared_buffer_t recv_buffer = this->receive_buffer();
 
-            HL_NET_LOG_INFO("Start reading for client: {}", get_alias());
-            m_connection_data->socket.async_receive(
+            HL_NET_LOG_INFO("Start reading for client: {}", this->get_alias());
+
+            m_connection_data.socket.async_receive(
                 asio_buffer(*recv_buffer),
-                [this, recv_buffer](const boost_system_error_code &ec, size_t bytes_transferred)
+                [this, _this_as_shared=this->as_shared(), recv_buffer]
+                (const boost_system_error_code &ec, const size_t &bytes_transferred) -> void
                 {
-                    shared_buffer_t buffer_cpy = make_shared_buffer(recv_buffer, bytes_transferred);
-
-                    HL_NET_LOG_DEBUG("Received {} bytes for client: {}", bytes_transferred, get_alias());
-                    if (ec)
-                    {
-                        HL_NET_LOG_WARN("Error on receive for client: {} with error: {}", get_alias(), ec.message());
-                        switch (ec.value())
-                        {
-                        case boost_asio_error::eof:
-                        case boost_asio_error::connection_reset:
-                        case boost_asio_error::connection_aborted:
-                        case boost_asio_error::operation_aborted:
-                        case boost_asio_error::broken_pipe:
-                        case boost_asio_error::not_connected:
-                        case boost_asio_error::bad_descriptor:
-                        case boost_asio_error::fault:
-                        case boost_asio_error::host_not_found:
-                        // case boost_asio_error::host_not_found_try_again: == ::eof
-                        case boost_asio_error::host_unreachable:
-                        case boost_asio_error::network_down:
-                        case boost_asio_error::network_reset:
-                        case boost_asio_error::network_unreachable:
-                        case boost_asio_error::no_recovery:
-                            HL_NET_LOG_ERROR("Client cannot connect: {} stopping reading due to {}, stopping read, considered not healthy!", get_alias(), ec.message());
-                            set_health_status(false);
-                        default:
-                            break;
-                        }
-                        callbacks().on_receive_error(buffer_cpy, ec, bytes_transferred);
-                    }
-                    else
-                    {
-                        callbacks().on_receive(buffer_cpy, bytes_transferred);
-                    }
-
-                    _receive_async();
+                    this->_receive_async_callback(ec, bytes_transferred, recv_buffer);
                 }
             );
         }
 
         base_client_unwrapped()
-            : m_connection_data(nullptr)
+            : m_connection_data()
             , m_mutex_api_control_flow()
         {
-            HL_NET_LOG_DEBUG("Created base_client_unwrapped: {}", get_alias());
+            HL_NET_LOG_DEBUG("Created base_client_unwrapped: {}", this->get_alias());
         }
 
     public:
@@ -1486,25 +1567,25 @@ namespace logger = spdlog;
         // Moved on the base class the de
         virtual ~base_client_unwrapped() override
         {
-            HL_NET_LOG_DEBUG("Destroying base_client_unwrapped: {}", get_alias());
-            if (connected())
+            HL_NET_LOG_DEBUG("Destroying base_client_unwrapped: {}", this->get_alias());
+            if (this->connected())
             {
-                disconnect();
+                this->disconnect();
             }
-            HL_NET_LOG_DEBUG("Destroyed base_client_unwrapped: {}", get_alias());
+            HL_NET_LOG_DEBUG("Destroyed base_client_unwrapped: {}", this->get_alias());
         }
 
         virtual bool connect(const basic_string &host, const basic_string &port) override final
         {
             {
-                basic_lock_guard lock(m_mutex_api_control_flow);
+                basic_lock_guard lock(this->m_mutex_api_control_flow);
 
-                HL_NET_LOG_INFO("Connecting client: {} to {}:{}", get_alias(), host, port);
+                HL_NET_LOG_INFO("Connecting client: {} to {}:{}", this->get_alias(), host, port);
 
-                if (connected() == true)
+                if (this->connected() == true)
                 {
-                    HL_NET_LOG_ERROR("Client already connected: {}", get_alias());
-                    callbacks().on_connect_error(boost_asio_error::already_connected);
+                    HL_NET_LOG_ERROR("Client already connected: {}", this->get_alias());
+                    this->callbacks().on_connect_error(boost_asio_error::already_connected);
                     return false;
                 }
             
@@ -1512,48 +1593,47 @@ namespace logger = spdlog;
 
                 callback_register.start_pool();
 
-                m_connection_data = basic_unique_ptr<connection_data>(new connection_data(host, port));
+                this->m_connection_data.resolve(host, port);
 
                 boost_system_error_code error = boost_asio_error::host_not_found;
                 typename Protocol::resolver::iterator end;
 
-                while (error && m_connection_data->endpoint_iterator != end)
-                {
-                    m_connection_data->socket.close();
-                    m_connection_data->socket.connect(*m_connection_data->endpoint_iterator++, error);
-                }
-
-                if (error)
-                {
-                    HL_NET_LOG_ERROR("Error connecting client: {} with error: {}", get_alias(), error.message());
-                    callback_register.on_connect_error(error);
-                    callback_register.stop_pool();
-                    return false;
-                }
-
-                set_connect_status(true);
-                set_health_status(true);
-
-                m_connection_data->io_service_thread = basic_thread(
-                [this]()
-                {
-                    HL_NET_LOG_INFO("Starting io_service thread for client: {}", get_alias());
-                    while (true) {
-                        this->m_connection_data->io_service.run();
-                        if (healthy()) {
-                            this->m_connection_data->io_service.reset();
-                        } else {
-                            break;
-                        }
+                _HL_INTERNAL_USE_WHEN_TCP(Protocol, {
+                    while (error && this->m_connection_data.endpoint_iterator != end)
+                    {
+                        this->m_connection_data.socket.close();
+                        this->m_connection_data.socket.connect(*this->m_connection_data.endpoint_iterator++, error);
                     }
-                    HL_NET_LOG_INFO("Stopping io_service thread for client: {}", get_alias());
+
+                    if (error)
+                    {
+                        HL_NET_LOG_ERROR("Error connecting client: {} with error: {}", this->get_alias(), error.message());
+                        callback_register.on_connect_error(error);
+                        callback_register.stop_pool();
+                        return false;
+                    }
                 });
 
-                HL_NET_LOG_INFO("on_connect call: {}", get_alias());
-                callback_register.on_connect();
-                HL_NET_LOG_INFO("on_connected call: {}", get_alias());
+                _HL_INTERNAL_USE_WHEN_UDP(Protocol, {
+                    this->m_connection_data.socket.open(Protocol::v4());
+                    this->m_connection_data.socket.connect(*this->m_connection_data.endpoint_iterator, error);
 
-                HL_NET_LOG_INFO("Connected client: {}", get_alias());
+                    if (error)
+                    {
+                        HL_NET_LOG_ERROR("Error connecting client: {} with error: {}", this->get_alias(), error.message());
+                        callback_register.on_connect_error(error);
+                        callback_register.stop_pool();
+                        return false;
+                    }
+                });
+
+                this->set_connect_status(true);
+                this->set_health_status(true);
+
+                this->m_connection_data.io_service_thread = basic_thread([this](void) -> void { basic_io_service_coroutine(*this, this->m_connection_data.io_service); });
+
+                callback_register.on_connect();
+                HL_NET_LOG_INFO("Connected client: {}", this->get_alias());
             }
 
             this->_receive_async();
@@ -1562,29 +1642,28 @@ namespace logger = spdlog;
 
         virtual bool disconnect() override final
         {
-            basic_lock_guard lock(m_mutex_api_control_flow);
+            basic_lock_guard lock(this->m_mutex_api_control_flow);
 
-            HL_NET_LOG_INFO("Disconnecting client: {}", get_alias());
+            HL_NET_LOG_INFO("Disconnecting client: {}", this->get_alias());
 
-            if (connected() == false)
+            if (this->connected() == false)
             {
-                HL_NET_LOG_WARN("Client already disconnected: {}", get_alias());
-                callbacks().on_disconnect_error(boost_asio_error::not_connected);
+                HL_NET_LOG_WARN("Client already disconnected: {}", this->get_alias());
+                this->callbacks().on_disconnect_error(boost_asio_error::not_connected);
                 return false;
             }
 
-            set_health_status(false);
+            this->set_health_status(false);
 
-            m_connection_data->socket.close();
-            m_connection_data->io_service.stop();
-            m_connection_data->io_service_thread.join();
-            m_connection_data = nullptr;
+            this->m_connection_data.socket.close();
+            this->m_connection_data.io_service.stop();
+            this->m_connection_data.io_service_thread.join();
 
             client_callback_register &callback_register = this->callbacks();
 
             callback_register.on_disconnect();
 
-            HL_NET_LOG_INFO("Disconnected client: {}", get_alias());
+            HL_NET_LOG_INFO("Disconnected client: {}", this->get_alias());
 
             callback_register.stop_pool();
 
@@ -1592,81 +1671,105 @@ namespace logger = spdlog;
 
             return true;
         }
+    
+    private:
+        void _send_async_callback(const boost_system_error_code &ec, size_t bytes_transferred)
+        {
+            HL_NET_LOG_DEBUG("Sent {} bytes for client: {}", bytes_transferred, this->get_alias());
+            if (ec)
+            {
+                HL_NET_LOG_ERROR("Error on send for client: {} with error: {} and {} bytes", this->get_alias(), ec.message(), bytes_transferred);
+                this->callbacks().on_send_error(ec, bytes_transferred);
 
+                switch (ec.value())
+                {
+                case boost_asio_error::eof:
+                case boost_asio_error::connection_reset:
+                case boost_asio_error::connection_aborted:
+                case boost_asio_error::operation_aborted:
+                case boost_asio_error::broken_pipe:
+                case boost_asio_error::not_connected:
+                case boost_asio_error::bad_descriptor:
+                case boost_asio_error::fault:
+                case boost_asio_error::host_not_found:
+                // case boost_asio_error::host_not_found_try_again: == ::eof
+                case boost_asio_error::host_unreachable:
+                case boost_asio_error::network_down:
+                case boost_asio_error::network_reset:
+                case boost_asio_error::network_unreachable:
+                case boost_asio_error::no_recovery:
+                    HL_NET_LOG_ERROR("Client cannot send data: {} due to {}, stopping send, considered not healthy!", get_alias(), ec.message());
+                    this->set_health_status(false);
+                default:
+                    break;
+                }
+            }
+            else
+            {
+                this->callbacks().on_sent(bytes_transferred);
+            }
+        }
+
+    public:
         virtual bool send(const shared_buffer_t &buffer, const size_t &size) override final
         {
-            basic_lock_guard lock(m_mutex_api_control_flow);
+            basic_lock_guard lock(this->m_mutex_api_control_flow);
 
-            HL_NET_LOG_DEBUG("Preparing to send {} bytes for client: {}", size, get_alias());
+            HL_NET_LOG_DEBUG("Preparing to send {} bytes for client: {}", size, this->get_alias());
 
             if (!healthy())
             {
-                HL_NET_LOG_ERROR("Cannot send data to from a non-healthy client: {}", get_alias());
-                callbacks().on_send_error(boost_system_error_code(boost_asio_error::not_connected), 0);
+                HL_NET_LOG_ERROR("Cannot send data to from a non-healthy client: {}", this->get_alias());
+                this->callbacks().on_send_error(boost_system_error_code(boost_asio_error::not_connected), 0);
                 return false;
             }
             else if (!size)
             {
-                HL_NET_LOG_ERROR("Cannot send 0 bytes to the client: {}", get_alias());
-                callbacks().on_send_error(boost_system_error_code(boost_asio_error::invalid_argument), 0);
+                HL_NET_LOG_ERROR("Cannot send 0 bytes to the client: {}", this->get_alias());
+                this->callbacks().on_send_error(boost_system_error_code(boost_asio_error::invalid_argument), 0);
                 return false;
             }
             else if (!buffer)
             {
-                HL_NET_LOG_ERROR("Cannot send data from a null buffer client: {}", get_alias());
-                callbacks().on_send_error(boost_system_error_code(boost_asio_error::invalid_argument), 0);
+                HL_NET_LOG_ERROR("Cannot send data from a null buffer client: {}", this->get_alias());
+                this->callbacks().on_send_error(boost_system_error_code(boost_asio_error::invalid_argument), 0);
                 return false;
             }
             else if (size > buffer->size())
             {
-                HL_NET_LOG_ERROR("Cannot send more than the buffer size: {} bytes from client: {}", buffer->size(), get_alias());
-                callbacks().on_send_error(boost_system_error_code(boost_asio_error::message_size), 0);
+                HL_NET_LOG_ERROR("Cannot send more than the buffer size: {} bytes from client: {}", buffer->size(), this->get_alias());
+                this->callbacks().on_send_error(boost_system_error_code(boost_asio_error::message_size), 0);
                 return false;
             }
+            else
+            {
+                HL_NET_LOG_INFO("Sending {} bytes for client: {}", size, this->get_alias());
 
-            HL_NET_LOG_INFO("Sending {} bytes for client: {}", size, get_alias());
-
-            m_connection_data->socket.async_send(
-                asio_buffer(*buffer, size),
-                [this, buffer]
-                (const boost_system_error_code &ec, size_t bytes_transferred)
-                {
-                    HL_NET_LOG_DEBUG("Sent {} bytes for client: {}", bytes_transferred, get_alias());
-                    if (ec)
-                    {
-                        HL_NET_LOG_ERROR("Error on send for client: {} with error: {} and {} bytes", get_alias(), ec.message(), bytes_transferred);
-                        callbacks().on_send_error(ec, bytes_transferred);
-
-                        switch (ec.value())
+                _HL_INTERNAL_USE_WHEN_TCP(Protocol, {
+                    this->m_connection_data.socket.async_send(
+                        asio_buffer(*buffer, size),
+                        [this, _this_as_shared=this->as_shared()]
+                        (const boost_system_error_code &ec, const size_t bytes_transferred)
                         {
-                        case boost_asio_error::eof:
-                        case boost_asio_error::connection_reset:
-                        case boost_asio_error::connection_aborted:
-                        case boost_asio_error::operation_aborted:
-                        case boost_asio_error::broken_pipe:
-                        case boost_asio_error::not_connected:
-                        case boost_asio_error::bad_descriptor:
-                        case boost_asio_error::fault:
-                        case boost_asio_error::host_not_found:
-                        // case boost_asio_error::host_not_found_try_again: == ::eof
-                        case boost_asio_error::host_unreachable:
-                        case boost_asio_error::network_down:
-                        case boost_asio_error::network_reset:
-                        case boost_asio_error::network_unreachable:
-                        case boost_asio_error::no_recovery:
-                            HL_NET_LOG_ERROR("Client cannot send data: {} due to {}, stopping send, considered not healthy!", get_alias(), ec.message());
-                            set_health_status(false);
-                        default:
-                            break;
+                            this->_send_async_callback(ec, bytes_transferred);
                         }
-                    }
-                    else
-                    {
-                        callbacks().on_sent(bytes_transferred);
-                    }
-                }
-            );
-            return true;
+                    );
+                });
+
+                _HL_INTERNAL_USE_WHEN_UDP(Protocol, {
+                    this->m_connection_data.socket.async_send_to(
+                        asio_buffer(*buffer, size),
+                        *this->m_connection_data.endpoint_iterator,
+                        [this, _this_as_shared=this->as_shared()]
+                        (const boost_system_error_code &ec, const size_t bytes_transferred)
+                        {
+                            this->_send_async_callback(ec, bytes_transferred);
+                        }
+                    );
+                });
+
+                return true;
+            }
         }
     };
 
@@ -1684,11 +1787,11 @@ namespace logger = spdlog;
 
         explicit client_wrapper()
             : m_shared_client(Protocol::make())
-            , m_client(*m_shared_client)
+            , m_client(*this->m_shared_client)
         {
-            HL_NET_LOG_DEBUG("Creating client wrapper for: {}", get_alias());
+            HL_NET_LOG_DEBUG("Creating client wrapper for: {}", this->get_alias());
 
-            client_callback_register &callbacks = m_client.callbacks();
+            client_callback_register &callbacks = this->m_client.callbacks();
 
             callbacks.set_on_connect([](base_abstract_client_unwrapped& client) { HL_NET_LOG_INFO("Client connected: {}", client.get_alias()); });
             callbacks.set_on_connect_error([](base_abstract_client_unwrapped& client, const boost_system_error_code ec) { HL_NET_LOG_ERROR("Client connect error: {} - {}", client.get_alias(), ec.message()); });
@@ -1707,79 +1810,79 @@ namespace logger = spdlog;
 
         ~client_wrapper()
         {
-            HL_NET_LOG_DEBUG("Destroying client wrapper for client: {}", get_alias());
-            HL_NET_LOG_DEBUG("Destroyed client wrapper for client: {}", get_alias());
+            HL_NET_LOG_DEBUG("Destroying client wrapper for client: {}", this->get_alias());
+            HL_NET_LOG_DEBUG("Destroyed client wrapper for client: {}", this->get_alias());
         }
 
         // API Reproduction
 
         const basic_string get_alias() const
         {
-            return m_client.get_alias();
+            return this->m_client.get_alias();
         }
 
         void set_alias(const basic_string &alias)
         {
-            m_client.set_alias(alias);
+            this->m_client.set_alias(alias);
         }
 
         client_callback_register& callbacks()
         {
-            return m_client.callbacks();
+            return this->m_client.callbacks();
         }
 
         bool connected() const
         {
-            return m_client.connected();
+            return this->m_client.connected();
         }
 
         bool healthy() const
         {
-            return m_client.healthy();
+            return this->m_client.healthy();
         }
 
         bool connect(const basic_string &host, const basic_string &port, bool auto_alias = true)
         {
             if (auto_alias) {
-                set_alias(fmt::format("client({}, {}:{})", static_cast<void*>(this), host, port));
+                this->set_alias(fmt::format("client({}, {}:{})", static_cast<void*>(this), host, port));
             }
-            return m_client.connect(host, port);
+            return this->m_client.connect(host, port);
         }
 
         bool disconnect(void)
         {
-            return m_client.disconnect();
+            return this->m_client.disconnect();
         }
 
         bool send(const shared_buffer_t &buffer)
         {
-            return m_client.send(buffer);
+            return this->m_client.send(buffer);
         }
 
         bool send(const shared_buffer_t &buffer, const size_t &size)
         {
-            return m_client.send(buffer, size);
+            return this->m_client.send(buffer, size);
         }
 
         bool send_bytes(const void *data, const size_t &size)
         {
-            return m_client.send_bytes(data, size);
+            return this->m_client.send_bytes(data, size);
+        }
+
+        template<typename T>
+        bool send_bytes(const basic_vector<T> &data)
+        {
+            return this->m_client.send_bytes(data);
         }
 
         bool send_string(const basic_string &str)
         {
-            return m_client.send_string(str);
-        }
-
-        template<typename T>
-        bool send_vec(const basic_vector<T> &data)
-        {
-            return m_client.send_vec(data);
+            return this->m_client.send_string(str);
         }
 
         operator bool() const
         {
-            return healthy();
+            return this->healthy();
         }
     };
 
@@ -2418,6 +2521,53 @@ namespace logger = spdlog;
         asio_tcp::socket m_socket;
         basic_mutex m_mutex_api_control_flow;
 
+        void _receive_async_callback(const boost_system_error_code &ec, size_t bytes_transferred)
+        {
+            shared_buffer_t buffer_cpy = make_shared_buffer(*receive_buffer(), bytes_transferred);
+            shared_abstract_connection connection = as_shared();
+
+            HL_NET_LOG_DEBUG("Received {} bytes from connection: {}", bytes_transferred, get_alias());
+            if (ec)
+            {
+                HL_NET_LOG_WARN("Error on receive for connection from: {} with error: {}", get_alias(), ec.message());
+                switch (ec.value())
+                {
+                case boost_asio_error::eof:
+                case boost_asio_error::connection_reset:
+                case boost_asio_error::connection_aborted:
+                case boost_asio_error::operation_aborted:
+                case boost_asio_error::broken_pipe:
+                case boost_asio_error::not_connected:
+                case boost_asio_error::host_not_found:
+                    HL_NET_LOG_ERROR("Connection cannot receive data from: {} due to {}, stopping receive, connection is not healthy!", get_alias(), ec.message());
+                    this->set_health_status(false);
+                    send_client_as_unhealthy_to_the_server();
+                    break;
+                // case boost_asio_error::host_not_found_try_again: == ::eof
+                case boost_asio_error::fault:
+                case boost_asio_error::network_reset:
+                case boost_asio_error::network_unreachable:
+                case boost_asio_error::network_down:
+                case boost_asio_error::host_unreachable:
+                case boost_asio_error::no_recovery:
+                    HL_NET_LOG_ERROR("Connection cannot receive data from: {} due to {}, stopping receive, server is not healthy!", get_alias(), ec.message());
+                    set_server_as_unhealthy();
+                    break;
+
+                default:
+                    break;
+                }
+                this->callbacks().on_receive_error(connection, buffer_cpy, ec, bytes_transferred);
+            }
+            else
+            {
+                this->callbacks().on_receive(connection, buffer_cpy, bytes_transferred);
+            }
+
+            _receive_async();
+        }
+
+
         void _receive_async()
         {
             basic_lock_guard lock(m_mutex_api_control_flow);
@@ -2436,50 +2586,8 @@ namespace logger = spdlog;
             shared_buffer_t buffer = receive_buffer();
             m_socket.async_receive(
                 asio_buffer(*buffer),
-                [this, buffer](const boost_system_error_code &ec, size_t bytes_transferred)
-                {
-                    shared_buffer_t buffer_cpy = make_shared_buffer(buffer, bytes_transferred);
-                    shared_abstract_connection connection = as_shared();
-
-                    HL_NET_LOG_DEBUG("Received {} bytes from connection: {}", bytes_transferred, get_alias());
-                    if (ec)
-                    {
-                        HL_NET_LOG_WARN("Error on receive for connection from: {} with error: {}", get_alias(), ec.message());
-                        switch (ec.value())
-                        {
-                        case boost_asio_error::eof:
-                        case boost_asio_error::connection_reset:
-                        case boost_asio_error::connection_aborted:
-                        case boost_asio_error::operation_aborted:
-                        case boost_asio_error::broken_pipe:
-                        case boost_asio_error::not_connected:
-                        case boost_asio_error::host_not_found:
-                            HL_NET_LOG_ERROR("Connection cannot receive data from: {} due to {}, stopping receive, connection is not healthy!", get_alias(), ec.message());
-                            this->set_health_status(false);
-                            send_client_as_unhealthy_to_the_server();
-                            break;
-                        // case boost_asio_error::host_not_found_try_again: == ::eof
-                        case boost_asio_error::fault:
-                        case boost_asio_error::network_reset:
-                        case boost_asio_error::network_unreachable:
-                        case boost_asio_error::network_down:
-                        case boost_asio_error::host_unreachable:
-                        case boost_asio_error::no_recovery:
-                            HL_NET_LOG_ERROR("Connection cannot receive data from: {} due to {}, stopping receive, server is not healthy!", get_alias(), ec.message());
-                            set_server_as_unhealthy();
-                            break;
-
-                        default:
-                            break;
-                        }
-                        this->callbacks().on_receive_error(connection, buffer_cpy, ec, bytes_transferred);
-                    }
-                    else
-                    {
-                        this->callbacks().on_receive(connection, buffer_cpy, bytes_transferred);
-                    }
-
-                    _receive_async();
+                [this, _this_shared = as_shared(), buffer](const boost_system_error_code &ec, const size_t &bytes_transferred) {
+                    _receive_async_callback(ec, bytes_transferred);
                 }
             );
         }
@@ -2534,7 +2642,52 @@ namespace logger = spdlog;
             HL_NET_LOG_INFO("Stopped connection: {}", get_alias());
             return true;
         }
+    
+    private:
+        void _send_async_callback(const boost_system_error_code &ec, const size_t bytes_transferred)
+        {
+            shared_abstract_connection connexion = as_shared();
+            HL_NET_LOG_DEBUG("Sent {} bytes to connection: {}", bytes_transferred, get_alias());
 
+            if (ec)
+            {
+                HL_NET_LOG_WARN("Error on send to connection: {} with error: {}", get_alias(), ec.message());
+                this->callbacks().on_send_error(connexion, ec, bytes_transferred);
+                switch (ec.value())
+                {
+                case boost_asio_error::eof:
+                case boost_asio_error::connection_reset:
+                case boost_asio_error::connection_aborted:
+                case boost_asio_error::operation_aborted:
+                case boost_asio_error::broken_pipe:
+                case boost_asio_error::not_connected:
+                case boost_asio_error::host_not_found:
+                    HL_NET_LOG_ERROR("Connection cannot send data to: {} due to {}, stopping receive, connection is not healthy!", get_alias(), ec.message());
+                    this->set_health_status(false);
+                    send_client_as_unhealthy_to_the_server();
+                    break;
+
+                // case boost_asio_error::host_not_found_try_again: == ::eof
+                case boost_asio_error::fault:
+                case boost_asio_error::network_reset:
+                case boost_asio_error::network_unreachable:
+                case boost_asio_error::network_down:
+                case boost_asio_error::host_unreachable:
+                case boost_asio_error::no_recovery:
+                    HL_NET_LOG_ERROR("Connection cannot send data to: {} due to {}, stopping receive, server & connection is not healthy!", get_alias(), ec.message());
+                    set_server_as_unhealthy();
+                    break;
+                default:
+                    break;
+                }
+            }
+            else
+            {
+                this->callbacks().on_sent(connexion, bytes_transferred);
+            }
+        }
+
+    public:
         bool send(const shared_buffer_t &buffer, const size_t &size) override final
         {
             basic_lock_guard lock(m_mutex_api_control_flow);
@@ -2568,47 +2721,11 @@ namespace logger = spdlog;
             }
 
             HL_NET_LOG_INFO("Sending {} bytes to connection: {}", size, get_alias());
+
             m_socket.async_send(
                 asio_buffer(*buffer, size),
-                [this, buffer, connexion](const boost_system_error_code &ec, const size_t bytes_transferred)
-                {
-                    HL_NET_LOG_DEBUG("Sent {} bytes to connection: {}", bytes_transferred, get_alias());
-                    if (ec)
-                    {
-                        HL_NET_LOG_WARN("Error on send to connection: {} with error: {}", get_alias(), ec.message());
-                        this->callbacks().on_send_error(connexion, ec, bytes_transferred);
-                        switch (ec.value())
-                        {
-                        case boost_asio_error::eof:
-                        case boost_asio_error::connection_reset:
-                        case boost_asio_error::connection_aborted:
-                        case boost_asio_error::operation_aborted:
-                        case boost_asio_error::broken_pipe:
-                        case boost_asio_error::not_connected:
-                        case boost_asio_error::host_not_found:
-                            HL_NET_LOG_ERROR("Connection cannot send data to: {} due to {}, stopping receive, connection is not healthy!", get_alias(), ec.message());
-                            this->set_health_status(false);
-                            send_client_as_unhealthy_to_the_server();
-                            break;
-
-                        // case boost_asio_error::host_not_found_try_again: == ::eof
-                        case boost_asio_error::fault:
-                        case boost_asio_error::network_reset:
-                        case boost_asio_error::network_unreachable:
-                        case boost_asio_error::network_down:
-                        case boost_asio_error::host_unreachable:
-                        case boost_asio_error::no_recovery:
-                            HL_NET_LOG_ERROR("Connection cannot send data to: {} due to {}, stopping receive, server & connection is not healthy!", get_alias(), ec.message());
-                            set_server_as_unhealthy();
-                            break;
-                        default:
-                            break;
-                        }
-                    }
-                    else
-                    {
-                        this->callbacks().on_sent(connexion, bytes_transferred);
-                    }
+                [this, _this_as_shared=connexion](const boost_system_error_code &ec, const size_t bytes_transferred) {
+                    _send_async_callback(ec, bytes_transferred);
                 }
             );
             return true;
@@ -2624,6 +2741,9 @@ namespace logger = spdlog;
 
     class base_abstract_server_unwrapped : public basic_enable_shared_from_this<base_abstract_server_unwrapped>, public meta_non_copy_moveable
     {
+    public:
+        using shared_t = basic_shared_ptr<base_abstract_server_unwrapped>;
+
     private:
         server_callback_register m_callback_register;
 
@@ -2632,6 +2752,12 @@ namespace logger = spdlog;
 
         basic_atomic_bool m_running;
         basic_atomic_bool m_healthy;
+
+    protected:
+        shared_t as_shared()
+        {
+            return shared_from_this();
+        }
 
     public:
         bool is_running() const
@@ -2713,15 +2839,15 @@ namespace logger = spdlog;
             return send(client_id, buffer, size);
         }
 
+        template<typename T>
+        inline bool send_bytes(const client_id_t& client_id, const basic_vector<T> &data)
+        {
+            return send_bytes(client_id, reinterpret_cast<const byte *>(data.data()), data.size() * sizeof(T));
+        }
+
         inline bool send_string(const client_id_t& client_id, const basic_string &str)
         {
             return send_bytes(client_id, reinterpret_cast<const byte *>(str.data()), str.size());
-        }
-
-        template<typename T>
-        inline bool send_vec(const client_id_t& client_id, const basic_vector<T> &data)
-        {
-            return send_bytes(client_id, reinterpret_cast<const byte *>(data.data()), data.size() * sizeof(T));
         }
     };
 
@@ -2731,6 +2857,7 @@ namespace logger = spdlog;
         using connection_t = tcp_connection_unwrapped;
         using shared_connection_t = typename connection_t::shared_t;
         using shared_t = basic_shared_ptr<tcp_server_unwrapped>;
+        using this_type_t = tcp_server_unwrapped;
 
     private:
         basic_io_service m_io_service;
@@ -2775,6 +2902,60 @@ namespace logger = spdlog;
             return m_connections.find(client_id) != nullptr;
         }
 
+        void _async_accept_callback(const boost_system_error_code &ec, shared_connection_t connection)
+        {
+            if (ec)
+            {
+                HL_NET_LOG_ERROR("Error on accept for server: {} with error: {}", get_alias(), ec.message());
+
+                switch (ec.value())
+                {
+                case boost_asio_error::eof:
+                case boost_asio_error::connection_reset:
+                case boost_asio_error::connection_aborted:
+                case boost_asio_error::operation_aborted:
+                case boost_asio_error::broken_pipe:
+                case boost_asio_error::not_connected:
+                case boost_asio_error::host_not_found:
+                case boost_asio_error::fault:
+                case boost_asio_error::network_reset:
+                case boost_asio_error::network_unreachable:
+                case boost_asio_error::network_down:
+                case boost_asio_error::host_unreachable:
+                case boost_asio_error::no_recovery:
+                    HL_NET_LOG_ERROR("Connection cannot accept data from: {} due to {}, stopping receive, server is not healthy!", get_alias(), ec.message());
+                    this->set_health_status(false);
+                    break;
+
+                default:
+                    break;
+                }
+                callbacks().on_connection_error(ec);
+            }
+            else
+            {
+                connection_t &cref = *connection;
+
+                HL_NET_LOG_INFO("Accepted connection for server: {}", get_alias());
+
+                for (; _has_connection(m_last_id); ++m_last_id); // find a valid id in case of overflow
+
+                cref.set_id(m_last_id++);
+                cref.set_alias(fmt::format("connection({}, {})", get_alias(), cref.get_id()));
+
+                {
+                    basic_lock_guard lock(m_connections_mutex);
+                    m_connections.emplace(cref.get_id(), connection);
+                }
+
+                cref.start_receive();
+                base_abstract_connection_unwrapped::shared_t conn_callback = basic_static_pointer_cast<base_abstract_connection_unwrapped>(connection);
+                callbacks().on_connection(conn_callback);
+            }
+            _accept_async();
+        }
+
+
         void _accept_async()
         {
             if (!healthy())
@@ -2789,9 +2970,10 @@ namespace logger = spdlog;
             shared_connection_t connection = basic_shared_ptr<connection_t>(new connection_t(
                 m_io_service,
                 callbacks(),
-                [this]() { this->set_health_status(false); },
-                [this](const client_id_t& client_id)
-                {
+                [this, _this_as_shared=this->as_shared()](void) -> void {
+                    this->set_health_status(false);
+                },
+                [this, _this_as_shared=this->as_shared()](const client_id_t& client_id) -> void {
                     basic_lock_guard lock_unhealthy_conn(m_unhealthy_connections_mutex);
                     m_unhealthy_connections.push(client_id);
                     m_unhealthy_connections_cv.notify_one();
@@ -2800,58 +2982,8 @@ namespace logger = spdlog;
 
             m_acceptor.async_accept(
                 connection->socket(),
-                [this, connection](const boost_system_error_code &ec)
-                {
-                    if (ec)
-                    {
-                        HL_NET_LOG_ERROR("Error on accept for server: {} with error: {}", get_alias(), ec.message());
-
-                        switch (ec.value())
-                        {
-                        case boost_asio_error::eof:
-                        case boost_asio_error::connection_reset:
-                        case boost_asio_error::connection_aborted:
-                        case boost_asio_error::operation_aborted:
-                        case boost_asio_error::broken_pipe:
-                        case boost_asio_error::not_connected:
-                        case boost_asio_error::host_not_found:
-                        case boost_asio_error::fault:
-                        case boost_asio_error::network_reset:
-                        case boost_asio_error::network_unreachable:
-                        case boost_asio_error::network_down:
-                        case boost_asio_error::host_unreachable:
-                        case boost_asio_error::no_recovery:
-                            HL_NET_LOG_ERROR("Connection cannot accept data from: {} due to {}, stopping receive, server is not healthy!", get_alias(), ec.message());
-                            this->set_health_status(false);
-                            break;
-
-                        default:
-                            break;
-                        }
-                        callbacks().on_connection_error(ec);
-                    }
-                    else
-                    {
-                        connection_t &cref = *connection;
-
-                        HL_NET_LOG_INFO("Accepted connection for server: {}", get_alias());
-
-                        for (; _has_connection(m_last_id); ++m_last_id); // find a valid id in case of overflow
-
-                        cref.set_id(m_last_id++);
-                        cref.set_alias(fmt::format("connection({}, {})", get_alias(), cref.get_id()));
-
-                        {
-                            basic_lock_guard lock(m_connections_mutex);
-                            m_connections.emplace(cref.get_id(), connection);
-                        }
-
-                        cref.start_receive();
-                        base_abstract_connection_unwrapped::shared_t conn_callback = basic_static_pointer_cast<base_abstract_connection_unwrapped>(connection);
-                        callbacks().on_connection(conn_callback);
-                    }
-                    _accept_async();
-                }
+                [this, _this_as_shared=this->as_shared(), connection]
+                (const boost_system_error_code &ec) -> void { this->_async_accept_callback(ec, connection); }
             );
         }
 
@@ -2966,42 +3098,11 @@ namespace logger = spdlog;
 
                 set_health_status(true);
 
-                m_io_service_thread = basic_thread(
-                [this]()
-                {
-                    HL_NET_LOG_INFO("Starting io_service thread for server: {}", get_alias());
-                    while (true) {
-                        this->m_io_service.run();
-                        if (healthy()) {
-                            this->m_io_service.reset();
-                        } else {
-                            break;
-                        }
-                    }
-                    HL_NET_LOG_WARN("Stopping io_service thread for server (unhealthy or disconnected): {}", get_alias());
+                m_io_service_thread = basic_thread([this](void) -> void {
+                    basic_io_service_coroutine(*this, this->m_io_service);
                 });
-
-                m_unhealthy_connections_thread = basic_thread(
-                [this]()
-                {
-                    HL_NET_LOG_INFO("Starting unhealthy connections thread for server: {}", get_alias());
-                    while (true)
-                    {
-                        basic_unique_lock lock_waiter(m_unhealthy_connections_mutex);
-                        m_unhealthy_connections_cv.wait(lock_waiter, [this]() { return !m_unhealthy_connections.empty(); });
-                        if (!healthy())
-                        {
-                            break;
-                        }
-                        client_id_t client_id;
-                        {
-                            basic_lock_guard lock_connections(m_connections_mutex);
-                            client_id = m_unhealthy_connections.front();
-                            m_unhealthy_connections.pop();
-                        }
-                        this->disconnect(client_id);
-                    }
-                    HL_NET_LOG_WARN("Stopping unhealthy connections thread for server (unhealthy or disconnected): {}", get_alias());
+                m_unhealthy_connections_thread = basic_thread([this](void) -> void {
+                    unhealthy_thread_check_coroutine(*this, m_unhealthy_connections_cv, m_unhealthy_connections_mutex, m_connections_mutex, m_unhealthy_connections);
                 });
 
                 callbacks_register.on_start_success();
@@ -3170,7 +3271,50 @@ namespace logger = spdlog;
         {
             return m_endpoint_str;
         }
+    
+    private:
+        void _send_async_connexion_callback(const boost_system_error_code &ec, const size_t bytes_transferred, shared_abstract_connection connexion)
+        {
+            HL_NET_LOG_DEBUG("Sent {} bytes to connection: {}", bytes_transferred, get_alias());
+            if (ec)
+            {
+                HL_NET_LOG_WARN("Error on send to connection: {} with error: {}", get_alias(), ec.message());
+                this->callbacks().on_send_error(connexion, ec, bytes_transferred);
+                switch (ec.value())
+                {
+                case boost_asio_error::eof:
+                case boost_asio_error::connection_reset:
+                case boost_asio_error::connection_aborted:
+                case boost_asio_error::operation_aborted:
+                case boost_asio_error::broken_pipe:
+                case boost_asio_error::not_connected:
+                case boost_asio_error::host_not_found:
+                    HL_NET_LOG_ERROR("Connection cannot send data to: {} due to {}, stopping receive, connection is not healthy!", get_alias(), ec.message());
+                    this->set_health_status(false);
+                    send_client_as_unhealthy_to_the_server();
+                    break;
 
+                // case boost_asio_error::host_not_found_try_again: == ::eof
+                case boost_asio_error::fault:
+                case boost_asio_error::network_reset:
+                case boost_asio_error::network_unreachable:
+                case boost_asio_error::network_down:
+                case boost_asio_error::host_unreachable:
+                case boost_asio_error::no_recovery:
+                    HL_NET_LOG_ERROR("Connection cannot send data to: {} due to {}, stopping receive, server & connection is not healthy!", get_alias(), ec.message());
+                    set_server_as_unhealthy();
+                    break;
+                default:
+                    break;
+                }
+            }
+            else
+            {
+                this->callbacks().on_sent(connexion, bytes_transferred);
+            }
+        }
+
+    public:
         bool send(const shared_buffer_t &buffer, const size_t &size) override
         {
             shared_abstract_connection connexion = as_shared();
@@ -3204,45 +3348,10 @@ namespace logger = spdlog;
             m_socket.async_send_to(
                 asio_buffer(*buffer, size),
                 m_endpoint,
-                [this, buffer, connexion](const boost_system_error_code &ec, const size_t bytes_transferred)
+                [this, _this_as_shared=this->as_shared(), buffer, connexion]
+                (const boost_system_error_code &ec, const size_t bytes_transferred)
                 {
-                    HL_NET_LOG_DEBUG("Sent {} bytes to connection: {}", bytes_transferred, get_alias());
-                    if (ec)
-                    {
-                        HL_NET_LOG_WARN("Error on send to connection: {} with error: {}", get_alias(), ec.message());
-                        this->callbacks().on_send_error(connexion, ec, bytes_transferred);
-                        switch (ec.value())
-                        {
-                        case boost_asio_error::eof:
-                        case boost_asio_error::connection_reset:
-                        case boost_asio_error::connection_aborted:
-                        case boost_asio_error::operation_aborted:
-                        case boost_asio_error::broken_pipe:
-                        case boost_asio_error::not_connected:
-                        case boost_asio_error::host_not_found:
-                            HL_NET_LOG_ERROR("Connection cannot send data to: {} due to {}, stopping receive, connection is not healthy!", get_alias(), ec.message());
-                            this->set_health_status(false);
-                            send_client_as_unhealthy_to_the_server();
-                            break;
-
-                        // case boost_asio_error::host_not_found_try_again: == ::eof
-                        case boost_asio_error::fault:
-                        case boost_asio_error::network_reset:
-                        case boost_asio_error::network_unreachable:
-                        case boost_asio_error::network_down:
-                        case boost_asio_error::host_unreachable:
-                        case boost_asio_error::no_recovery:
-                            HL_NET_LOG_ERROR("Connection cannot send data to: {} due to {}, stopping receive, server & connection is not healthy!", get_alias(), ec.message());
-                            set_server_as_unhealthy();
-                            break;
-                        default:
-                            break;
-                        }
-                    }
-                    else
-                    {
-                        this->callbacks().on_sent(connexion, bytes_transferred);
-                    }
+                    _send_async_connexion_callback(ec, bytes_transferred, connexion);
                 }
             );
             return true;
@@ -3287,48 +3396,123 @@ namespace logger = spdlog;
             return m_receive_buffer;
         }
 
-        shared_connection_t _get_connection(const basic_string &endpoint_id)
+        shared_connection_t _get_connection(const basic_string &endpoint_id, bool lock = true)
         {
-            basic_lock_guard lock(m_connections_mutex);
-            client_holder_t::iterator it = m_connections.find(endpoint_id);
-            return it == m_connections.end() ? it->second : nullptr;
+            _HL_INTERNAL_LOCK_GUARD_WHEN_TRUE(lock, lock_guard, m_connections_mutex, {
+                client_holder_t::iterator it = m_connections.find(endpoint_id);
+                return it != m_connections.end() ? it->second : nullptr;
+            });
         }
 
-        shared_connection_t _get_connection(const basic_string &endpoint_id) const
+        const shared_connection_t _get_connection(const basic_string &endpoint_id, bool lock = true) const
         {
-            basic_lock_guard lock(m_connections_mutex);
-            client_holder_t::const_iterator it = m_connections.find(endpoint_id);
-            return it == m_connections.end() ? it->second : nullptr;
+            _HL_INTERNAL_LOCK_GUARD_WHEN_TRUE(lock, lock_guard, m_connections_mutex, {
+                client_holder_t::const_iterator it = m_connections.find(endpoint_id);
+                return it != m_connections.end() ? it->second : nullptr;
+            });
         }
 
-        const shared_connection_t _get_connection(const client_id_t &endpoint_id)
+        shared_connection_t _get_connection(const client_id_t &endpoint_id, bool lock = true)
         {
-            basic_lock_guard lock(m_connections_mutex);
-            client_holder_id_to_typename_t::iterator it = m_connections_id_to_typename.find(endpoint_id);
-            if (it == m_connections_id_to_typename.end())
+            _HL_INTERNAL_LOCK_GUARD_WHEN_TRUE(lock, lock_guard, m_connections_mutex, {
+                client_holder_id_to_typename_t::const_iterator it = m_connections_id_to_typename.find(endpoint_id);
+                return it != m_connections_id_to_typename.end() ? _get_connection(it->second, false) : nullptr;
+            });
+        }
+
+        const shared_connection_t _get_connection(const client_id_t &endpoint_id, bool lock = true) const
+        {
+            _HL_INTERNAL_LOCK_GUARD_WHEN_TRUE(lock, lock_guard, m_connections_mutex, {
+                client_holder_id_to_typename_t::const_iterator it = m_connections_id_to_typename.find(endpoint_id);
+                return it != m_connections_id_to_typename.end() ? _get_connection(it->second, false) : nullptr;
+            });
+        }
+
+        bool _has_connection(const basic_string &endpoint_id, bool lock = true) const
+        {
+            _HL_INTERNAL_LOCK_GUARD_WHEN_TRUE(lock, lock_guard, m_connections_mutex, {
+                return _get_connection(endpoint_id, false) != nullptr;
+            });
+        }
+        bool _has_connection(const client_id_t &endpoint_id, bool lock = true) const
+        {
+            _HL_INTERNAL_LOCK_GUARD_WHEN_TRUE(lock, lock_guard, m_connections_mutex, {
+                return _get_connection(endpoint_id, false) != nullptr;
+            });
+        }
+
+        void _receive_async_callback(const boost_system_error_code &ec, const size_t bytes_transferred, const shared_buffer_t buffer)
+        {
+            shared_buffer_t buffer_cpy = make_shared_buffer(buffer, bytes_transferred);
+
+            if (ec)
             {
-                return nullptr;
-            }
-            client_holder_t::iterator it_conn = m_connections.find(it->second);
-            return it_conn == m_connections.end() ? it_conn->second : nullptr;
-        }
+                HL_NET_LOG_WARN("Error on receive for server: {} with error: {}", get_alias(), ec.message());
+                switch (ec.value())
+                {
+                case boost_asio_error::eof:
+                case boost_asio_error::connection_reset:
+                case boost_asio_error::connection_aborted:
+                case boost_asio_error::operation_aborted:
+                case boost_asio_error::broken_pipe:
+                case boost_asio_error::not_connected:
+                case boost_asio_error::host_not_found:
+                    HL_NET_LOG_ERROR("Server cannot receive data due to {}, stopping receive, server is not healthy!", ec.message());
+                    set_health_status(false);
+                    break;
 
-        const shared_connection_t _get_connection(const client_id_t &endpoint_id) const
-        {
-            basic_lock_guard lock(m_connections_mutex);
-            client_holder_id_to_typename_t::const_iterator it = m_connections_id_to_typename.find(endpoint_id);
-            if (it == m_connections_id_to_typename.end())
+                default:
+                    break;
+                }
+                // todo check if this is valid to do this
+                shared_abstract_connection connection(nullptr);
+                callbacks().on_receive_error(connection, buffer_cpy, ec, bytes_transferred);
+                _receive_async();
+            }
+            else
             {
-                return nullptr;
-            }
-            client_holder_t::const_iterator it_conn = m_connections.find(it->second);
-            return it_conn == m_connections.end() ? it_conn->second : nullptr;
-        }
+                HL_NET_LOG_INFO("Received {} bytes from a client", bytes_transferred);
+                basic_lock_guard lock_conn(m_connections_mutex);
 
-        bool _has_connection(const basic_string &endpoint_id) const
-        {
-            basic_lock_guard lock(m_connections_mutex);
-            return m_connections.find(endpoint_id) != nullptr;
+                const asio_udp::endpoint endpoint_cpy = m_endpoint;
+                const basic_string endpoint_str = udp_endpoint_to_string(endpoint_cpy);
+                shared_connection_t connection = _get_connection(endpoint_str, false);
+                client_id_t client_id;
+
+                // connecting the client to the server 
+                if (!connection)
+                {
+                    HL_NET_LOG_INFO("Connecting new client to server: {}", get_alias());
+                    for (; _has_connection(endpoint_str, false); ++m_last_id); // find a valid id in case of overflow
+
+                    connection = basic_shared_ptr<connection_t>(new connection_t(
+                        callbacks(),
+                        [this]() { this->set_health_status(false); },
+                        [this](const client_id_t& endpoint_id)
+                        {
+                            basic_lock_guard lock_unhealthy_conn(m_unhealthy_connections_mutex);
+                            m_unhealthy_connections.push(endpoint_id);
+                        },
+                        m_endpoint,
+                        m_socket
+                    ));
+                    connection->set_alias(endpoint_str);
+                    m_connections_id_to_typename.emplace(connection->get_id(), endpoint_str);
+                    m_connections.emplace(endpoint_str, connection);
+                    connection->set_id(m_last_id++);
+                    shared_abstract_connection connection_abstract = basic_static_pointer_cast<base_abstract_connection_unwrapped>(connection);
+                    callbacks().on_connection(connection_abstract);
+                    HL_NET_LOG_INFO("Connected new client {} to server: {}", connection->get_id(), get_alias());
+                }
+
+                // ensure the connection is alive before getting id
+                client_id = connection->get_id();
+                HL_NET_LOG_INFO("Received {} bytes from client: {} for server: {}", bytes_transferred, client_id, get_alias());
+
+                shared_abstract_connection connection_abstract = basic_static_pointer_cast<base_abstract_connection_unwrapped>(connection);
+                callbacks().on_receive(connection_abstract, buffer_cpy, bytes_transferred);
+                _receive_async();
+            }
         }
 
         void _receive_async()
@@ -3350,73 +3534,9 @@ namespace logger = spdlog;
             m_socket.async_receive_from(
                 asio_buffer(*buffer),
                 m_endpoint,
-                [this, buffer](const boost_system_error_code &ec, size_t bytes_transferred)
-                {
-                    shared_buffer_t buffer_cpy = make_shared_buffer(buffer, bytes_transferred);
-
-                    if (ec)
-                    {
-                        HL_NET_LOG_WARN("Error on receive for server: {} with error: {}", get_alias(), ec.message());
-                        switch (ec.value())
-                        {
-                        case boost_asio_error::eof:
-                        case boost_asio_error::connection_reset:
-                        case boost_asio_error::connection_aborted:
-                        case boost_asio_error::operation_aborted:
-                        case boost_asio_error::broken_pipe:
-                        case boost_asio_error::not_connected:
-                        case boost_asio_error::host_not_found:
-                            HL_NET_LOG_ERROR("Server cannot receive data due to {}, stopping receive, server is not healthy!", ec.message());
-                            set_health_status(false);
-                            break;
-
-                        default:
-                            break;
-                        }
-                        // todo check if this is valid to do this
-                        shared_abstract_connection connection(nullptr);
-                        callbacks().on_receive_error(connection, buffer_cpy, ec, bytes_transferred);
-                        _receive_async();
-                    }
-                    else
-                    {
-                        basic_lock_guard lock_conn(m_connections_mutex);
-
-                        const asio_udp::endpoint endpoint_cpy = m_endpoint;
-                        const basic_string endpoint_str = udp_endpoint_to_string(endpoint_cpy);
-                        shared_connection_t connection = _get_connection(endpoint_str);
-                        client_id_t client_id;
-
-                        // connecting the client to the server 
-                        if (!connection)
-                        {
-                            for (; _has_connection(endpoint_str); ++m_last_id); // find a valid id in case of overflow
-
-                            connection = basic_shared_ptr<connection_t>(new connection_t(
-                                callbacks(),
-                                [this]() { this->set_health_status(false); },
-                                [this](const client_id_t& endpoint_id)
-                                {
-                                    basic_lock_guard lock_unhealthy_conn(m_unhealthy_connections_mutex);
-                                    m_unhealthy_connections.push(endpoint_id);
-                                },
-                                m_endpoint,
-                                m_socket
-                            ));
-                            m_connections_id_to_typename.emplace(connection->get_id(), endpoint_str);
-                            m_connections.emplace(endpoint_str, connection);
-                            connection->set_id(m_last_id++);
-                            shared_abstract_connection connection_abstract = basic_static_pointer_cast<base_abstract_connection_unwrapped>(connection);
-                            callbacks().on_connection(connection_abstract);
-                        }
-
-                        // ensure the connection is alive before getting id
-                        client_id = connection->get_id();
-                        HL_NET_LOG_INFO("Received {} bytes from client: {} for server: {}", bytes_transferred, client_id, get_alias());
-
-                        shared_abstract_connection connection_abstract = basic_static_pointer_cast<base_abstract_connection_unwrapped>(connection);
-                        callbacks().on_receive(connection_abstract, buffer_cpy, bytes_transferred);
-                    }
+                [this, _this_as_shared=this->as_shared(), buffer]
+                (const boost_system_error_code &ec, size_t bytes_transferred) -> void {
+                    this->_receive_async_callback(ec, bytes_transferred, buffer);
                 }
             );
         }
@@ -3426,7 +3546,7 @@ namespace logger = spdlog;
             , m_io_service()
             , m_io_service_thread()
             , m_socket(m_io_service)
-            , m_endpoint(asio_udp::v4(), 0)
+            , m_endpoint()
             , m_last_id(BASE_CLIENT_ID)
             , m_connections()
             , m_unhealthy_connections()
@@ -3458,7 +3578,11 @@ namespace logger = spdlog;
             stop();
             HL_NET_LOG_DEBUG("Destroyed udp_server_unwrapped: {}", get_alias());
         }
+    
+    private:
 
+
+    public:
         bool start(const basic_string &port) override final
         {
             {
@@ -3518,44 +3642,11 @@ namespace logger = spdlog;
 
                 set_health_status(true);
 
-                m_io_service_thread = basic_thread(
-                [this]()
-                {
-                    HL_NET_LOG_INFO("Starting io_service thread for server: {}", get_alias());
-                    while (true) {
-                        this->m_io_service.run();
-                        if (healthy()) {
-                            this->m_io_service.reset();
-                        } else {
-                            break;
-                        }
-                    }
-                    HL_NET_LOG_WARN("Stopping io_service thread for server (unhealthy or disconnected): {}", get_alias());
+                m_io_service_thread = basic_thread([this]() -> void { basic_io_service_coroutine(*this, this->m_io_service); });
+                m_unhealthy_connections_thread = basic_thread([this]() -> void {
+                    unhealthy_thread_check_coroutine(*this, m_unhealthy_connections_cv, m_unhealthy_connections_mutex, m_connections_mutex, m_unhealthy_connections);
                 });
 
-                m_unhealthy_connections_thread = basic_thread(
-                [this]()
-                {
-                    HL_NET_LOG_INFO("Starting unhealthy connections thread for server: {}", get_alias());
-                    while (true)
-                    {
-                        basic_unique_lock lock_waiter(m_unhealthy_connections_mutex);
-                        m_unhealthy_connections_cv.wait(lock_waiter, [this]() { return !m_unhealthy_connections.empty(); });
-                        if (!healthy())
-                        {
-                            break;
-                        }
-                        client_id_t endpoint_id;
-                        {
-                            basic_lock_guard lock_connections(m_connections_mutex);
-                            endpoint_id = m_unhealthy_connections.front();
-                            m_unhealthy_connections.pop();
-                        }
-
-                        this->disconnect(endpoint_id);
-                    }
-                    HL_NET_LOG_WARN("Stopping unhealthy connections thread for server (unhealthy or disconnected): {}", get_alias());
-                });
                 callbacks_register.on_start_success();
             }
 
@@ -3786,9 +3877,9 @@ namespace logger = spdlog;
         }
 
         template<typename T>
-        bool send_vec(const client_id_t& client_id, const basic_vector<T> &data)
+        bool send_bytes(const client_id_t& client_id, const basic_vector<T> &data)
         {
-            return m_server.send_vec(client_id, data);
+            return m_server.send_bytes(client_id, data);
         }
 
         bool healthy() const

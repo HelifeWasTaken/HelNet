@@ -10,7 +10,7 @@ Multithreaded utilities using boost::asio and modern C++ for client/server apps 
 - spdlog
 - fmt
 
-## Example of TCP Client
+## Example of TCP/UDP Client
 
 ```cpp
 #include "HelNet.hpp"
@@ -19,224 +19,92 @@ int main(int argc, char **argv)
 {
     if (argc < 3)
     {
-        HL_NET_LOG_ERROR("Usage: {} <host> <tcp-port>", argv[0]);
+        HL_NET_LOG_ERROR("Usage: {} <host> <port>", argv[0]);
         return 1;
     }
 
     hl::net::tcp_client client(argv[1], argv[2]);
+    // hl::net::udp_client client(argv[1], argv[2]);
+
     // While service is considered healthy
     // Equivalent to: client.healthy()
     while (client) { 
         client.send_string("Hello, World!");
+        std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 }
 ```
 
-## Example of UDP Client
+**Disclaimer:** UDP does not support `hostnames` as it does not have a connection, it only sends data to the given address and port. It means that `localhost` will not work for UDP but it will work for TCP.
+
+## Example of a TCP/UDP Server
+
+**Disclaimer:**
+
+As UDP does not have connection but we have connected endpoint, the user is solely responsible for handling the connection state. For example a wrapper for handling timeouts and reconnection attempts! To make it easier, the user will soon be able to **attach** plugins to callbacks before they are called! Timeouts can be done with `boost::asio::deadline_timer`.
+
+UDP does not support `hostnames` as it does not have a connection, it only sends data to the given address and port. It means that `localhost` will not work for UDP but it will work for TCP.
+
+The server will consider the connection healthy for UDP as long as the server is running and a `connection` in it purest form never fails. A connection is done as soon as the server receives data from a client.
 
 ```cpp
-#include "HelNet.hpp"
-
-int main(int argc, char **argv)
-{
-    if (argc < 3)
-    {
-        HL_NET_LOG_ERROR("Usage: {} <host> <tcp-port>", argv[0]);
-        return 1;
-    }
-
-    hl::net::udp_client client(argv[1], argv[2]);
-    // While service is considered healthy
-    // Equivalent to: client.healthy()
-    while (client) { 
-        client.send_string("Hello, World!");
-    }
-}
-```
-
-## Client Interoperability
-
-```cpp
-#include "HelNet.hpp"
-
-template<typename Protocol>
-int hello_world_client(char const *host, char const *port)
-{
-    hl::net::client_wrapper<Protocol> client(host, port);
-    while (client.healthy()) {
-        client.send_string("Hello, World!");
-    }
-}
-
-int main(int argc, char **argv)
-{
-    const std::string protocol = argc < 4 ? "tcp" : argv[3];
-
-    if (argc != 4 && argc != 3)
-    {
-        HL_NET_LOG_ERROR("Usage: {} <host> <port> [protocol(tcp*/udp)]", argv[0]);
-        return 1;
-    }
-    else if (protocol == "tcp")
-    {
-        return hello_world_client<hl::net::tcp_client_unwrapped>(argv[1], argv[2]); // TCP
-    }
-    else if (protocol == "udp")
-    {
-        return hello_world_client<hl::net::udp_client_unwrapped>(argv[1], argv[2]); // UDP
-    }
-    else
-    {
-        HL_NET_LOG_ERROR("Unknown protocol: {}", protocol);
-        return 1;
-    }
-}
-```
-
-## Example of a TCP/UDP Server (Echo) & Client
-
-**Disclaimer**: UDP is not implemented yet for listening
-
-This example can start a client that connects to a server and can send messages to it by reading from stdin (blocking)... The client will handle the received data asynchronously and print it to stdout. The clients also leaves if `std::cin.bad()` is true (input closed).
-This example can also start a server that listens for incoming connections and echoes back the received data asynchrnously to the client. The server will stop if it receives the message "exit" from a client.
-All of the given examples are run asynchronously for receiving and sending data...
-All of the callbacks are set to be synchronous by default, but can be set to be asynchronous by setting the `async` parameter to `true` in the `set_on_receive` and `set_on_send` functions.
-The callbacks are synchronous by default because launching a new thread for each callbacks has been proven to be inefficient when the callbacks are simply logging the received data or sending it back to the client.
-
-```cpp
+// Auto setup logging at the minimum level
+#define HL_NET_LOG_LEVEL HL_NET_LOG_LEVEL_MIN
+#define HL_NET_AUTO_SETUP_LOG_SERVICE
 
 #include "HelNet.hpp"
-#include <iostream>
 
-template<class Protocol>
-void client_routine(const std::string& host, const std::string& port)
+// using log critical to make sure the message is visible and printed
+static void handle_on_receive(hl::net::base_abstract_server_unwrapped& server,
+                              hl::net::shared_abstract_connection client,
+                              hl::net::shared_buffer_t data,
+                              const size_t& size)
 {
-    Protocol client;
-
-    if (client.connect(host, port) == false)
-    {
-        return;
-    }
-
-    // Write all received data to stdout asynchronously
-    client.callbacks().set_on_receive([](
-        hl::net::base_abstract_client_unwrapped&,
-        hl::net::shared_buffer_t data,
-        const size_t& size
-    )
-    {
-        try {
-            std::string str((const char*)(*data).data(), size);
-            HL_NET_LOG_CRITICAL("Received: {}", str);
-        } catch (const std::exception& e) {
-            HL_NET_LOG_CRITICAL("Exception when printing: {}", e.what());
-        }
-    });
-    client.callbacks().set_on_receive_async(true);
-
-    while (client)
-    {
-        std::string line;
-        std::getline(std::cin, line);
-        if (std::cin.bad())
-        {
-            std::cout << "Input closed - exiting" << std::endl;
+    try {
+        std::string str(reinterpret_cast<char*>(data->get()), size);
+        if (str == "exit" || str == "exit\n" || str == "exit\r\n") { // Handle nc and telnet style
+            HL_NET_LOG_CRITICAL("Received: exit - closing server...");
+            server.stop();
             break;
         }
-
-        client.send_string(line);
+        HL_NET_LOG_CRITICAL("Received: {}, echoing back to client {}", str, client->get_id());
+        client->send(data, size);
+    } catch (const std::exception& e) {
+        HL_NET_LOG_CRITICAL("Exception when printing: {} - closing server...", e.what());
+        server.stop();
     }
 }
 
-template<class Protocol>
-void server_routine(const std::string& port)
+int main(int argc, char **argv)
 {
-    Protocol server;
-
-    if (server.start(port) == false) {
-        return;
+    if (argc < 2) {
+        HL_NET_LOG_ERROR("Usage: {} <port>", argv[0]);
+        return 1;
     }
 
-    //(base_abstract_server_unwrapped& server, shared_abstract_connection client,
-    // shared_buffer_t buffer_copy, const size_t recv_bytes)>;
+    hl::net::tcp_server server;
+    // hl::net::udp_server server; // Decomment this line to use UDP
 
-    std::atomic_bool run;
+    if (server.start(argv[1]) == false) {
+        return 1;
+    }
 
-    server.callbacks().set_on_receive([&run = run](
-        hl::net::base_abstract_server_unwrapped&,
-        hl::net::shared_abstract_connection client,
-        hl::net::shared_buffer_t data,
-        const size_t& size
-    )
-    {
-        try {
-            std::string str((const char*)(*data).data(), size);
-            if (str == "exit") {
-                HL_NET_LOG_CRITICAL("Received: exit - closing server...");
-                run = false;
-                return;
-            }
-
-            HL_NET_LOG_CRITICAL("Received: {}, echoing back to client {}", str, client->get_id());
-            client->send(data, size);
-        } catch (const std::exception& e) {
-            HL_NET_LOG_CRITICAL("Exception when printing: {} - closing server...", e.what());
-            run = false;
-        }
-    });
+    server.callbacks().set_on_receive(std::bind(handle_on_receive, std::ref(server), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
     server.callbacks().set_on_receive_async(true);
 
-    while (server && run)
-    {
+    while (server) {
         // Sleep for a second to avoid 100% CPU usage (Will make the program wait for a second but it's fine for this example)
         std::this_thread::sleep_for(std::chrono::seconds(1)); 
     }
 }
-
-int main(int argc, char **argv)
-{
-    HL_NET_SETUP_LOG_LEVEL();
-
-    std::string port, mode = "connect", protocol = "tcp", host = "localhost";
-
-#if __GNUC__ || __clang__
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
-#endif
-    switch (argc)
-    {
-    case 5:
-        host = argv[4];
-    case 4:
-        protocol = argv[3];
-    case 3:
-        mode = argv[2];
-    case 2:
-        port = argv[1];
-        break;
-    default:
-        std::cout << argv[0] << ": <port> [*connect|listen] [*tcp|udp] [host = localhost (ignored for listen)]" << std::endl;
-        return 1;
-    }
-#if __GNUC__ || __clang__
-#pragma GCC diagnostic pop
-#endif
-
-    if (protocol != "tcp" && protocol != "udp") {
-        HL_NET_LOG_ERROR("Unsupported protocol: {} (only tcp/udp)", protocol);
-        return 1;
-    } else if (mode == "listen") {
-        if (protocol == "tcp") {
-            server_routine<hl::net::tcp_server>(port);
-        } else {
-            std::cerr << "UDP not implmeneted yet for listening" << std::endl;
-            return 2;
-        }
-    } else if (mode == "connect") {
-        protocol == "tcp" ? client_routine<hl::net::tcp_client>(host, port) : client_routine<hl::net::udp_client>(host, port);
-    } else {
-        std::cout << "Unsupported mode (only connect/listen)" << std::endl;
-    }
-    return 0;
-}
 ```
+
+Why should i use this instead of boost::asio directly?
+
+- It's somewhat easier to use
+- It's more modern C++ friendly
+- It has a logging system
+- It handles connection states for you in TCP
+- It recognizes clients in UDP
+- It has a callback system for most of the events
+- It will have a plugin system for callbacks (WIP*)
