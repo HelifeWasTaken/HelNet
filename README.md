@@ -55,20 +55,20 @@ The server will consider the connection healthy for UDP as long as the server is
 #include "HelNet.hpp"
 
 // using log critical to make sure the message is visible and printed
-static void handle_on_receive(hl::net::base_abstract_server_unwrapped& server,
+static void server_handle_on_receive(hl::net::base_abstract_server_unwrapped& server,
                               hl::net::shared_abstract_connection client,
-                              hl::net::shared_buffer_t data,
+                              hl::net::shared_buffer_t buffer,
                               const size_t& size)
 {
     try {
-        std::string str(reinterpret_cast<char*>(data->get()), size);
+        std::string str(reinterpret_cast<char*>(buffer->data()), size);
         if (str == "exit" || str == "exit\n" || str == "exit\r\n") { // Handle nc and telnet style
             HL_NET_LOG_CRITICAL("Received: exit - closing server...");
             server.stop();
-            break;
+            return;
         }
         HL_NET_LOG_CRITICAL("Received: {}, echoing back to client {}", str, client->get_id());
-        client->send(data, size);
+        client->send(buffer, size);
     } catch (const std::exception& e) {
         HL_NET_LOG_CRITICAL("Exception when printing: {} - closing server...", e.what());
         server.stop();

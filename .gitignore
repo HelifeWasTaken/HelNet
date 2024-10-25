@@ -35,3 +35,6 @@
 main.cpp
 *.swp
 *vgcore.*
+example.out
+example.bk
+

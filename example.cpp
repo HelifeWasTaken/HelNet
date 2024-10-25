@@ -1,3 +1,6 @@
+#define HL_NET_LOG_LEVEL HL_NET_LOG_LEVEL_MIN
+#define HL_NET_AUTO_SETUP_LOG_SERVICE
+
 #include "HelNet.hpp"
 #include <iostream>
 
@@ -12,7 +15,7 @@ void client_routine(const std::string& host, const std::string& port)
     }
 
     // Write all received data to stdout asynchronously
-    client.callbacks().set_on_receive([](
+    client.callbacks_register().set_on_receive([](
         hl::net::base_abstract_client_unwrapped&,
         hl::net::shared_buffer_t data,
         const size_t& size
@@ -25,7 +28,7 @@ void client_routine(const std::string& host, const std::string& port)
             HL_NET_LOG_CRITICAL("Exception when printing: {}", e.what());
         }
     });
-    client.callbacks().set_on_receive_async(true);
+    client.callbacks_register().set_on_receive_async(true);
 
     while (client)
     {
@@ -41,6 +44,26 @@ void client_routine(const std::string& host, const std::string& port)
     }
 }
 
+static void server_handle_on_receive(hl::net::base_abstract_server_unwrapped& server,
+                              hl::net::shared_abstract_connection client,
+                              hl::net::shared_buffer_t buffer,
+                              const size_t& size)
+{
+    try {
+        std::string str(reinterpret_cast<char*>(buffer->data()), size);
+        if (str == "exit" || str == "exit\n" || str == "exit\r\n") { // Handle nc and telnet style
+            HL_NET_LOG_CRITICAL("Received: exit - closing server...");
+            server.stop();
+            return;
+        }
+        HL_NET_LOG_CRITICAL("Received: {}, echoing back to client {}", str, client->get_id());
+        client->send(buffer, size);
+    } catch (const std::exception& e) {
+        HL_NET_LOG_CRITICAL("Exception when printing: {} - closing server...", e.what());
+        server.stop();
+    }
+}
+
 template<class Protocol>
 void server_routine(const std::string& port)
 {
@@ -51,37 +74,11 @@ void server_routine(const std::string& port)
         return;
     }
 
-    //(base_abstract_server_unwrapped& server, shared_abstract_connection client,
-    // shared_buffer_t buffer_copy, const size_t recv_bytes)>;
+    server.callbacks_register().set_on_receive(std::bind(server_handle_on_receive, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
+    server.callbacks_register().set_on_receive_async(true);
 
-    std::atomic_bool run = true;
-
-    server.callbacks().set_on_receive([&run = run](
-        hl::net::base_abstract_server_unwrapped&,
-        hl::net::shared_abstract_connection client,
-        hl::net::shared_buffer_t data,
-        const size_t& size
-    )
-    {
-        try {
-            std::string str((const char*)(*data).data(), size);
-            if (str == "exit\n" || str == "exit\r\n" || str == "exit") {
-                HL_NET_LOG_CRITICAL("Received: exit - closing server...");
-                run = false;
-                return;
-            }
-
-            HL_NET_LOG_CRITICAL("Received: {}, echoing back to client {}", str, client->get_id());
-            client->send(data, size);
-        } catch (const std::exception& e) {
-            HL_NET_LOG_CRITICAL("Exception when printing: {} - closing server...", e.what());
-            run = false;
-        }
-    });
-    server.callbacks().set_on_receive_async(true);
-
-    HL_NET_LOG_CRITICAL("Server health: {}, running: {}", server.healthy(), run.load());
-    while (server.healthy() && run)
+    HL_NET_LOG_CRITICAL("Server health: {}", server.healthy());
+    while (server)
     {
         // Sleep for a second to avoid 100% CPU usage (Will make the program wait for a second but it's fine for this example)
         std::this_thread::sleep_for(std::chrono::seconds(1)); 
