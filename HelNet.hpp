@@ -1223,7 +1223,7 @@ namespace __internal
             return this->m_receive_buffer;
         }
 
-    public:
+    protected:
         base_abstract_client_unwrapped()
             : m_connected(false)
             , m_healthy(false)
@@ -1232,11 +1232,6 @@ namespace __internal
             , m_alias(fmt::format("base_abstract_client_unwrapped({})", static_cast<void *>(this)))
             , m_callback_register(*this)
         {}
-
-        base_abstract_client_unwrapped(const base_abstract_client_unwrapped &) = delete;
-        base_abstract_client_unwrapped &operator=(const base_abstract_client_unwrapped &) = delete;
-        base_abstract_client_unwrapped(base_abstract_client_unwrapped &&) = delete;
-        base_abstract_client_unwrapped &operator=(base_abstract_client_unwrapped &&) = delete;
 
     public:
         const basic_string get_alias() const
@@ -1413,11 +1408,6 @@ namespace __internal
         }
 
     public:
-        base_client_unwrapped(const base_client_unwrapped &) = delete;
-        base_client_unwrapped &operator=(const base_client_unwrapped &) = delete;
-        base_client_unwrapped(base_client_unwrapped &&) = delete;
-        base_client_unwrapped &operator=(base_client_unwrapped &&) = delete;
-
         static shared_t make()
         {
             return shared_t(new this_type_t);
@@ -1650,11 +1640,6 @@ namespace __internal
             callbacks.set_on_send_error([](base_abstract_client_unwrapped& client, const boost_system_error_code ec, const size_t sent_bytes) { HL_NET_LOG_ERROR("Client send error: {} - {} - {}", client.get_alias(), ec.message(), sent_bytes); });
         }
 
-        client_wrapper(const client_wrapper&) = delete;
-        client_wrapper& operator=(const client_wrapper&) = delete;
-        client_wrapper(client_wrapper&&) = delete;
-        client_wrapper& operator=(client_wrapper&&) = delete;
-
         ~client_wrapper()
         {
             HL_NET_LOG_TRACE("Destroying client wrapper for client: {}", this->get_alias());
@@ -1868,7 +1853,6 @@ namespace __internal
         const basic_function<void(const client_id_t&)> m_send_client_as_unhealthy_to_the_server;
 
     protected:
-
         shared_abstract_connection as_shared()
         {
             return shared_from_this();
@@ -1944,7 +1928,7 @@ namespace __internal
             return m_healthy && is_running();
         }
 
-    public:
+    protected:
         base_abstract_connection_unwrapped(server_callback_register &callback_register,
                                              const basic_function<void(void)>& set_server_as_unhealthy,
                                              const basic_function<void(const client_id_t&)>& send_client_as_unhealthy_to_the_server)
@@ -1961,6 +1945,7 @@ namespace __internal
             HL_NET_LOG_TRACE("Creating base_abstract_connection_unwrapped: {}", get_alias());
         }
 
+    public:
         virtual ~base_abstract_connection_unwrapped()
         {
             HL_NET_LOG_TRACE("Destroying base_abstract_connection_unwrapped: {}", get_alias());
@@ -2037,12 +2022,7 @@ namespace __internal
             );
         }
 
-    public:
-        asio_tcp::socket &socket()
-        {
-            return m_socket;
-        }
-
+    private:
         tcp_connection_unwrapped(basic_io_service &io_service,
                                 server_callback_register &callback_register,
                                 const basic_function<void(void)>& set_server_as_unhealthy,
@@ -2056,6 +2036,15 @@ namespace __internal
             set_health_status(true);
         }
 
+    public:
+        static shared_t make(basic_io_service &io_service,
+                              server_callback_register &callback_register,
+                              const basic_function<void(void)>& set_server_as_unhealthy,
+                              const basic_function<void(const client_id_t&)>& send_client_as_unhealthy_to_the_server)
+        {
+            return shared_t(new tcp_connection_unwrapped(io_service, callback_register, set_server_as_unhealthy, send_client_as_unhealthy_to_the_server));
+        }
+
         virtual ~tcp_connection_unwrapped() override
         {
             HL_NET_LOG_TRACE("Destroying shared_abstract_connection: {}", get_alias());
@@ -2064,6 +2053,11 @@ namespace __internal
                 stop();
             }
             HL_NET_LOG_TRACE("Destroyed shared_abstract_connection: {}", get_alias());
+        }
+
+        asio_tcp::socket &socket()
+        {
+            return m_socket;
         }
 
         bool stop() override final
@@ -2235,6 +2229,7 @@ namespace __internal
         virtual bool send(const client_id_t& client_id, const shared_buffer_t &buffer, const size_t &size) = 0;
         virtual bool disconnect(const client_id_t& client_id) = 0;
 
+    protected:
         base_abstract_server_unwrapped()
             : m_callback_register(*this)
             , m_alias(fmt::format("base_abstract_server_unwrapped({})", static_cast<void*>(this)))
@@ -2245,6 +2240,7 @@ namespace __internal
             HL_NET_LOG_TRACE("Creating base_abstract_server_unwrapped: {}", get_alias());
         }
 
+    public:
         ~base_abstract_server_unwrapped()
         {
             HL_NET_LOG_TRACE("Destroying base_abstract_server_unwrapped: {}", get_alias());
@@ -2377,7 +2373,7 @@ namespace __internal
 
             basic_lock_guard lock_flow(m_mutex_api_control_flow);
 
-            shared_connection_t connection = basic_shared_ptr<connection_t>(new connection_t(
+            shared_connection_t connection = connection_t::make(
                 m_io_service,
                 callbacks_register(),
                 [this](void) -> void { this->set_health_status(false); },
@@ -2386,7 +2382,7 @@ namespace __internal
                     m_unhealthy_connections.push(client_id);
                     m_unhealthy_connections_cv.notify_one();
                 }
-            ));
+            );
 
             m_acceptor.async_accept(
                 connection->socket(),
@@ -2637,11 +2633,6 @@ namespace __internal
 
             set_alias(fmt::format("udp_connection_unwrapped({})", m_endpoint_str));
         }
-
-        udp_connection_unwrapped(const udp_connection_unwrapped&) = delete;
-        udp_connection_unwrapped& operator=(const udp_connection_unwrapped&) = delete;
-        udp_connection_unwrapped(udp_connection_unwrapped&&) = delete;
-        udp_connection_unwrapped& operator=(udp_connection_unwrapped&&) = delete;
 
         virtual ~udp_connection_unwrapped() override
         {
@@ -2964,9 +2955,6 @@ namespace __internal
             HL_NET_LOG_TRACE("Destroyed udp_server_unwrapped: {}", get_alias());
         }
     
-    private:
-
-
     public:
         bool start(const basic_string &port) override final
         {
