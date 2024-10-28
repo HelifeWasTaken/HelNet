@@ -1,8 +1,20 @@
 #define HL_NET_LOG_LEVEL HL_NET_LOG_LEVEL_MIN
 #define HL_NET_AUTO_SETUP_LOG_SERVICE
 
-#include "HelNet.hpp"
 #include <iostream>
+#include "HelNet.hpp"
+
+static void client_handle_on_receive(hl::net::client_t client,
+                              hl::net::shared_buffer_t buffer,
+                              const size_t& size)
+{
+    try {
+        std::string str(reinterpret_cast<char*>(buffer->data()), size);
+        HL_NET_LOG_CRITICAL("Received: {}, from client: {}", str, client->get_alias());
+    } catch (const std::exception& e) {
+        HL_NET_LOG_CRITICAL("Exception when printing: {}", e.what());
+    }
+}
 
 template<class Protocol>
 void client_routine(const std::string& host, const std::string& port)
@@ -15,19 +27,7 @@ void client_routine(const std::string& host, const std::string& port)
     }
 
     // Write all received data to stdout asynchronously
-    client.callbacks_register().set_on_receive([](
-        hl::net::base_abstract_client_unwrapped&,
-        hl::net::shared_buffer_t data,
-        const size_t& size
-    )
-    {
-        try {
-            std::string str((const char*)(*data).data(), size);
-            HL_NET_LOG_CRITICAL("Received: {}", str);
-        } catch (const std::exception& e) {
-            HL_NET_LOG_CRITICAL("Exception when printing: {}", e.what());
-        }
-    });
+    client.callbacks_register().set_on_receive(std::bind(client_handle_on_receive, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
     client.callbacks_register().set_on_receive_async(true);
 
     while (client)
@@ -44,8 +44,8 @@ void client_routine(const std::string& host, const std::string& port)
     }
 }
 
-static void server_handle_on_receive(hl::net::base_abstract_server_unwrapped& server,
-                              hl::net::shared_abstract_connection client,
+static void server_handle_on_receive(hl::net::server_t server,
+                              hl::net::connection_t client,
                               hl::net::shared_buffer_t buffer,
                               const size_t& size)
 {
@@ -53,14 +53,14 @@ static void server_handle_on_receive(hl::net::base_abstract_server_unwrapped& se
         std::string str(reinterpret_cast<char*>(buffer->data()), size);
         if (str == "exit" || str == "exit\n" || str == "exit\r\n") { // Handle nc and telnet style
             HL_NET_LOG_CRITICAL("Received: exit - closing server...");
-            server.stop();
+            server->request_stop(); // Marks the server as unhealthy (will close on next iteration)
             return;
         }
         HL_NET_LOG_CRITICAL("Received: {}, echoing back to client {}", str, client->get_id());
         client->send(buffer, size);
     } catch (const std::exception& e) {
         HL_NET_LOG_CRITICAL("Exception when printing: {} - closing server...", e.what());
-        server.stop();
+        server->stop();
     }
 }
 
@@ -77,12 +77,28 @@ void server_routine(const std::string& port)
     server.callbacks_register().set_on_receive(std::bind(server_handle_on_receive, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
     server.callbacks_register().set_on_receive_async(true);
 
-    HL_NET_LOG_CRITICAL("Server health: {}", server.healthy());
-    while (server)
-    {
-        // Sleep for a second to avoid 100% CPU usage (Will make the program wait for a second but it's fine for this example)
-        std::this_thread::sleep_for(std::chrono::seconds(1)); 
+    HL_NET_IF_CONSTEXPR (std::is_same<Protocol, hl::net::udp_server>::value) {
+        //TODO
+ //       hl::net::plugins::server_clients_timeout timeout_plugin(2000); // 2000ms
+//        hl::net::plugins::server_clients_timeout::attach(server, timeout_plugin);
+        while (server) {
+            std::this_thread::sleep_for(std::chrono::seconds(1)); 
+            // timeout_plugin.on_update(server); // TODO: Should be called automatically by the server
+        }
+    } else {
+        while (server) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
     }
+    /*
+    // Should become
+    if constexpr(std::is_same<Protocol, hl::net::udp_server>::value) {
+        server.attach_plugin<hl::net::plugins::server_clients_timeout>(server, 2000); // 2000ms
+    }
+    while (server) { 
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+    */
     HL_NET_LOG_CRITICAL("Server closed");
 }
 

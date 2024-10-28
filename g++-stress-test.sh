@@ -1,6 +1,6 @@
 #!/bin/bash
 
-g++ -std=c++23 \
+g++ -std=c++11 \
     -g3 \
     -O3 \
     \

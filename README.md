@@ -56,7 +56,7 @@ The server will consider the connection healthy for UDP as long as the server is
 
 // using log critical to make sure the message is visible and printed
 static void server_handle_on_receive(hl::net::base_abstract_server_unwrapped& server,
-                              hl::net::shared_abstract_connection client,
+                              hl::net::connection_t client,
                               hl::net::shared_buffer_t buffer,
                               const size_t& size)
 {
