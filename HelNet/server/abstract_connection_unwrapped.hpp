@@ -5,7 +5,7 @@ Copyright: (C) 2024 Mattis DALLEAU
 
 #pragma once
 
-#include "callbacks.hpp"
+#include "HelNet/server/callbacks.hpp"
 
 namespace hl
 {
@@ -14,8 +14,11 @@ namespace net
     using client_is_unhealthy_notifier_t = std::function<void(const client_id_t&)>;
     using server_is_unhealthy_notifier_t = std::function<void(void)>;
 
+HL_NET_DIAGNOSTIC_PUSH()
+HL_NET_DIAGNOSTIC_NON_VIRTUAL_DESTRUCTOR_IGNORED()
     class base_abstract_connection_unwrapped : public std::enable_shared_from_this<base_abstract_connection_unwrapped>, public hl::silva::collections::meta::NonCopyMoveable
     {
+HL_NET_DIAGNOSTIC_POP()
     public:
         using shared_t = std::shared_ptr<base_abstract_connection_unwrapped>;
 
@@ -127,7 +130,7 @@ namespace net
         }
 
     public:
-        virtual ~base_abstract_connection_unwrapped()
+        virtual ~base_abstract_connection_unwrapped() override
         {
             HL_NET_LOG_TRACE("Destroying base_abstract_connection_unwrapped: {}", get_alias());
             HL_NET_LOG_TRACE("Destroyed base_abstract_connection_unwrapped: {}", get_alias());

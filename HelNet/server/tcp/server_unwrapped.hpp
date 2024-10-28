@@ -6,15 +6,15 @@ Copyright: (C) 2024 Mattis DALLEAU
 #pragma once
 
 #include <boost/asio/ip/tcp.hpp>
-#include "../abstract_server_unwrapped.hpp"
-#include "./connection_unwrapped.hpp"
-#include "../utils.hpp"
+#include "HelNet/server/abstract_server_unwrapped.hpp"
+#include "HelNet/server/tcp/connection_unwrapped.hpp"
+#include "HelNet/utils.hpp"
 
 namespace hl
 {
 namespace net
 {
-    class tcp_server_unwrapped : public base_abstract_server_unwrapped
+    class tcp_server_unwrapped final : public base_abstract_server_unwrapped
     {
     public:
         using shared_t = std::shared_ptr<tcp_server_unwrapped>;
@@ -44,7 +44,7 @@ namespace net
             {
                 HL_NET_LOG_DEBUG("Accepted connection for server: {}", get_alias());
                 base_abstract_connection_unwrapped::shared_t conn_callback = std::static_pointer_cast<base_abstract_connection_unwrapped>(connection);
-                _set_connection(conn_callback, utils::endpoint_to_string(connection->socket().remote_endpoint()));
+                _set_connection<true>(conn_callback, utils::endpoint_to_string(connection->socket().remote_endpoint()));
                 connection->start_receive();
                 callbacks_register().on_connection(conn_callback);
             }
@@ -88,7 +88,7 @@ namespace net
             return shared_t(new tcp_server_unwrapped);
         }
 
-        virtual ~tcp_server_unwrapped()
+        virtual ~tcp_server_unwrapped() override final
         {
             HL_NET_LOG_TRACE("Destroying tcp_server_unwrapped: {}", get_alias());
             stop();

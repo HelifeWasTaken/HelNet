@@ -9,14 +9,14 @@ Copyright: (C) 2024 Mattis DALLEAU
 #include <boost/bind/bind.hpp>
 #include <boost/asio/placeholders.hpp>
 
-#include "../abstract_server_unwrapped.hpp"
-#include "./connection_unwrapped.hpp"
+#include "HelNet/server/abstract_server_unwrapped.hpp"
+#include "HelNet/server/udp/connection_unwrapped.hpp"
 
 namespace hl
 {
 namespace net
 {
-    class udp_server_unwrapped : public base_abstract_server_unwrapped
+    class udp_server_unwrapped final : public base_abstract_server_unwrapped
     {
     public:
         using shared_t = std::shared_ptr<udp_server_unwrapped>;
@@ -59,27 +59,34 @@ namespace net
                 // Should that even be possible? 
                 // Should lock all the way between _get_connection and _set_connection?
                 HL_NET_LOG_DEBUG("Received {} bytes from a client", bytes_transferred);
-                const boost::asio::ip::udp::endpoint endpoint_cpy = m_endpoint;
-                const std::string endpoint_str = utils::endpoint_to_string(endpoint_cpy);
-                connection_t connection = _get_connection(endpoint_str);
 
-                // connecting the client to the server 
-                if (!connection)
-                {
-                    HL_NET_LOG_DEBUG("Connecting new client to server: {}", get_alias());
+                connection_t connection = _lock_connection_and_apply<connection_t>(
+                    [this, buffer_cpy, bytes_transferred](void) -> connection_t 
+                    {
+                        const boost::asio::ip::udp::endpoint endpoint_cpy = m_endpoint;
+                        const std::string endpoint_str = utils::endpoint_to_string(endpoint_cpy);
+                        connection_t fconnection = _get_connection<false>(endpoint_str);
 
-                    connection = std::static_pointer_cast<base_abstract_connection_unwrapped>(udp_connection_t::make(
-                        callbacks_register(),
-                        make_server_is_unhealthy_notifier(),
-                        make_client_is_unhealthy_notifier(),
-                        m_endpoint,
-                        m_socket
-                    ));
-                    connection->set_alias(endpoint_str);
-                    _set_connection(connection, utils::endpoint_to_string(m_endpoint));
-                    callbacks_register().on_connection(connection);
-                    HL_NET_LOG_DEBUG("Connected new client {} to server: {}", connection->get_id(), get_alias());
-                }
+                        // connecting the client to the server 
+                        if (!fconnection)
+                        {
+                            HL_NET_LOG_DEBUG("Connecting new client to server: {}", get_alias());
+
+                            fconnection = std::static_pointer_cast<base_abstract_connection_unwrapped>(udp_connection_t::make(
+                                callbacks_register(),
+                                make_server_is_unhealthy_notifier(),
+                                make_client_is_unhealthy_notifier(),
+                                m_endpoint,
+                                m_socket
+                            ));
+                            fconnection->set_alias(endpoint_str);
+                            _set_connection<false>(fconnection, endpoint_str);
+                            callbacks_register().on_connection(fconnection);
+                            HL_NET_LOG_DEBUG("Connected new client {} to server: {}", fconnection->get_id(), get_alias());
+                        }
+                        return fconnection;
+                    }
+                );
 
                 HL_NET_LOG_DEBUG("Received {} bytes from client: {} for server: {}", bytes_transferred, connection->get_id(), get_alias());
 
@@ -125,7 +132,7 @@ namespace net
             return shared_t(new udp_server_unwrapped);
         }
 
-        virtual ~udp_server_unwrapped()
+        virtual ~udp_server_unwrapped() override final
         {
             HL_NET_LOG_TRACE("Destroying udp_server_unwrapped: {}", get_alias());
             stop();

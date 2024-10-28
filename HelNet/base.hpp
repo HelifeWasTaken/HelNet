@@ -81,18 +81,8 @@ static_assert(HL_NET_BUFFER_SIZE > 0, "HL_NET_BUFFER_SIZE must be greater than 0
 
     static const char *DEFAULT_REGISTER_LAYER = "__hl_net_default_layer__";
 
-    #define _HL_INTERNAL_USE_WHEN_TCP(PROTOCOL, CODE) \
-        do { HL_NET_IF_CONSTEXPR (std::is_same<PROTOCOL, boost::asio::ip::tcp>::value) { CODE } } while (0)
-
-    #define _HL_INTERNAL_USE_WHEN_UDP(PROTOCOL, CODE) \
-        do { HL_NET_IF_CONSTEXPR (std::is_same<PROTOCOL, boost::asio::ip::udp>::value) { CODE } } while (0)
-
-    /*
     #define _HL_INTERNAL_LOCK_GUARD_WHEN_TRUE(CONDITION, LOCK_NAME, MUTEX, CODE) \
-        do { if (CONDITION) { std::lock_guard<std::mutex> LOCK_NAME(MUTEX); CODE } else { CODE } } while (0)
-    */
-    #define _HL_INTERNAL_LOCK_GUARD_WHEN_TRUE(CONDITION, LOCK_NAME, MUTEX, CODE) \
-        do { if (CONDITION) { std::lock_guard<std::mutex> LOCK_NAME(MUTEX); CODE } else { CODE } } while (0)
+        do { HL_NET_IF_CONSTEXPR (CONDITION) { std::lock_guard<std::mutex> LOCK_NAME(MUTEX); CODE } else { CODE } } while (0)
 
     static inline shared_buffer_t make_shared_buffer()
     {

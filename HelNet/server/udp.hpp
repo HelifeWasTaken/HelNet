@@ -5,8 +5,8 @@ Copyright: (C) 2024 Mattis DALLEAU
 
 #pragma once
 
-#include "./udp/server_unwrapped.hpp"
-#include "./wrapper.hpp"
+#include "HelNet/server/udp/server_unwrapped.hpp"
+#include "HelNet/server/wrapper.hpp"
 
 namespace hl
 {

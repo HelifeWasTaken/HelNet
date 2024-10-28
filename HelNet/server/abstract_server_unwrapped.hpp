@@ -7,9 +7,9 @@ Copyright: (C) 2024 Mattis DALLEAU
 
 #include <boost/asio/io_service.hpp>
 
-#include "./callbacks.hpp"
-#include "./abstract_connection_unwrapped.hpp"
-#include "./utils.hpp"
+#include "HelNet/server/callbacks.hpp"
+#include "HelNet/server/abstract_connection_unwrapped.hpp"
+#include "HelNet/server/utils.hpp"
 
 namespace hl
 {
@@ -19,8 +19,11 @@ namespace net
     using client_holder_t = std::unordered_map<client_id_t, connection_t>;
     using client_holder_name_to_id_t = utils::back_and_forth_unordered_map<std::string, client_id_t>;
 
+HL_NET_DIAGNOSTIC_PUSH()
+HL_NET_DIAGNOSTIC_NON_VIRTUAL_DESTRUCTOR_IGNORED()
     class base_abstract_server_unwrapped : public std::enable_shared_from_this<base_abstract_server_unwrapped>, public hl::silva::collections::meta::NonCopyMoveable
     {
+HL_NET_DIAGNOSTIC_POP()
     public:
         using this_type_t = base_abstract_server_unwrapped;
         using shared_t = std::shared_ptr<base_abstract_server_unwrapped>;
@@ -85,7 +88,7 @@ namespace net
                         endpoint_id = m_unhealthy_connections.front();
                         m_unhealthy_connections.pop();
                         if (this->healthy()) {
-                            _unset_connection(endpoint_id, false);
+                            _unset_connection<false>(endpoint_id);
                         }
                     }
                 }
@@ -102,15 +105,15 @@ namespace net
 
             m_last_id = BASE_CLIENT_ID;
 
+            set_run_status(true);
+            set_health_status(true);
+
             m_io_service_thread = std::thread(
                 std::bind(&this_type_t::basic_io_service_coroutine, this)
             );
             m_unhealthy_connections_thread = std::thread(
                 std::bind(&this_type_t::unhealthy_thread_check_coroutine, this)
             );
-
-            set_run_status(true);
-            set_health_status(true);
 
             HL_NET_LOG_TRACE("Started server pool: {}", get_alias());
         }
@@ -134,63 +137,65 @@ namespace net
             HL_NET_LOG_TRACE("Stopped server pool: {}", get_alias());
         }
 
+        template<bool LockConnectionMutex>
         connection_t _get_connection(const client_id_t& client_id)
         {
-            std::lock_guard<std::mutex> lock(m_connections_mutex);
-            if (client_id == INVALID_CLIENT_ID) return nullptr;
-            client_holder_t::iterator it = m_connections.find(client_id);
-            return it == m_connections.end() ? it->second : nullptr;
+            _HL_INTERNAL_LOCK_GUARD_WHEN_TRUE(LockConnectionMutex, lock_conn, m_connections_mutex, {
+                if (client_id == INVALID_CLIENT_ID) return nullptr;
+                auto it = m_connections.find(client_id);
+                return it == m_connections.end() ? nullptr : it->second;
+            });
         }
 
+        template<bool LockConnectionMutex>
         const connection_t _get_connection(const client_id_t& client_id) const
         {
-            std::lock_guard<std::mutex> lock(m_connections_mutex);
-            if (client_id == INVALID_CLIENT_ID) return nullptr;
-            client_holder_t::const_iterator it = m_connections.find(client_id);
-            return it == m_connections.end() ? it->second : nullptr;
+            _HL_INTERNAL_LOCK_GUARD_WHEN_TRUE(LockConnectionMutex, lock_conn, m_connections_mutex, {
+                if (client_id == INVALID_CLIENT_ID) return nullptr;
+                auto it = m_connections.find(client_id);
+                return it == m_connections.end() ? nullptr : it->second;
+            });
         }
 
-        bool _has_connection(const client_id_t& client_id, bool lock = true) const
+        template<bool LockConnectionMutex>
+        bool _has_connection(const client_id_t& client_id) const
         {
-            _HL_INTERNAL_LOCK_GUARD_WHEN_TRUE(lock, lock_conn, m_connections_mutex, {
+            _HL_INTERNAL_LOCK_GUARD_WHEN_TRUE(LockConnectionMutex, lock_conn, m_connections_mutex, {
                 return m_connections.find(client_id) != m_connections.end();
             });
         }
 
-        connection_t _get_connection(const std::string &endpoint_id, bool lock = true)
+        template<bool LockConnectionMutex>
+        connection_t _get_connection(const std::string &endpoint_id)
         {
-            _HL_INTERNAL_LOCK_GUARD_WHEN_TRUE(lock, lock_conn, m_connections_mutex, {
+            _HL_INTERNAL_LOCK_GUARD_WHEN_TRUE(LockConnectionMutex, lock_conn, m_connections_mutex, {
                 client_holder_name_to_id_t::forward_iterator it = m_connections_name_to_id.find_forward(endpoint_id);
-                return it == m_connections_name_to_id.end_forward() ? nullptr : _get_connection(it->first);
+                return it == m_connections_name_to_id.end_forward() ? nullptr : _get_connection<false>(it->second);
             });
         }
 
-        const connection_t _get_connection(const std::string &endpoint_id, bool lock = true) const
+        template<bool LockConnectionMutex>
+        const connection_t _get_connection(const std::string &endpoint_id) const
         {
-            _HL_INTERNAL_LOCK_GUARD_WHEN_TRUE(lock, lock_conn, m_connections_mutex, {
+            _HL_INTERNAL_LOCK_GUARD_WHEN_TRUE(LockConnectionMutex, lock_conn, m_connections_mutex, {
                 client_holder_name_to_id_t::const_forward_iterator it = m_connections_name_to_id.find_forward(endpoint_id);
-                return it == m_connections_name_to_id.end_forward() ? nullptr : _get_connection(it->first);
+                return it == m_connections_name_to_id.end_forward() ? nullptr : _get_connection<false>(it->second);
             });
         }
 
-        bool _has_connection(const std::string &endpoint_id, bool lock = true) const
+        template<bool LockConnectionMutex>
+        bool _has_connection(const std::string &endpoint_id) const
         {
-            _HL_INTERNAL_LOCK_GUARD_WHEN_TRUE(lock, lock_conn, m_connections_mutex, {
+            _HL_INTERNAL_LOCK_GUARD_WHEN_TRUE(LockConnectionMutex, lock_conn, m_connections_mutex, {
                 return m_connections_name_to_id.find_forward(endpoint_id) != m_connections_name_to_id.end_forward();
             });
         }
 
+        template<bool LockConnectionMutex>
         void _set_connection(const connection_t& connection,
-                             const std::string& name,
-                             bool lock_connection_mutex=true)
+                             const std::string& name)
         {
-            _HL_INTERNAL_LOCK_GUARD_WHEN_TRUE(lock_connection_mutex, lock, m_connections_mutex, {
-                if (m_connections.size() >= MAX_CONNECTIONS)
-                {
-                    HL_NET_LOG_ERROR("Cannot set a new connection: {} to server: {} because the server is full", name, get_alias());
-                    callbacks_register().on_connection_error(boost::asio::error::access_denied);
-                    return;
-                }
+            _HL_INTERNAL_LOCK_GUARD_WHEN_TRUE(LockConnectionMutex, lock, m_connections_mutex, {
                 do {
                     for (; m_connections.find(m_last_id) != m_connections.end(); ++m_last_id);
                 } while (m_last_id == INVALID_CLIENT_ID); // find a valid id in case of overflow
@@ -201,9 +206,10 @@ namespace net
             });
         }
 
-        bool _unset_connection(const client_id_t& client_id, bool lock_connection_mutex=true)
+        template<bool LockConnectionMutex>
+        bool _unset_connection(const client_id_t& client_id)
         {
-            _HL_INTERNAL_LOCK_GUARD_WHEN_TRUE(lock_connection_mutex, lock, m_connections_mutex, {
+            _HL_INTERNAL_LOCK_GUARD_WHEN_TRUE(LockConnectionMutex, lock, m_connections_mutex, {
                 HL_NET_LOG_ERROR("Unsetting connection: {} from server: {}", client_id, get_alias());
                 client_holder_t::iterator it = m_connections.find(client_id);
                 if (it == m_connections.end())
@@ -218,9 +224,10 @@ namespace net
             });
         }
 
-        bool _unset_connection(const std::string &endpoint_id, bool lock_connection_mutex=true)
+        template<bool LockConnectionMutex>
+        bool _unset_connection(const std::string &endpoint_id)
         {
-            _HL_INTERNAL_LOCK_GUARD_WHEN_TRUE(lock_connection_mutex, lock, m_connections_mutex, {
+            _HL_INTERNAL_LOCK_GUARD_WHEN_TRUE(LockConnectionMutex, lock, m_connections_mutex, {
                 client_holder_name_to_id_t::forward_iterator it = m_connections_name_to_id.find_forward(endpoint_id);
                 if (it == m_connections_name_to_id.end_forward())
                 {
@@ -232,6 +239,15 @@ namespace net
                 m_connections_name_to_id.erase(it);
                 return true;
             });
+        }
+
+        // utility function to lock the connections mutex and apply a function
+        // required when get&set connections are done manually
+        template<typename ReturnType>
+        ReturnType _lock_connection_and_apply(const std::function<ReturnType()> &apply)
+        {
+            std::lock_guard<std::mutex> lock(m_connections_mutex);
+            return apply();
         }
 
         boost::asio::io_service& _io_service()
@@ -315,7 +331,7 @@ namespace net
             std::lock_guard<std::mutex> lock(m_mutex_api_control_flow);
             HL_NET_LOG_DEBUG("Sending {} bytes to client: {} from server: {}", size, client_id, get_alias());
 
-            connection_t connection = _get_connection(client_id);
+            connection_t connection = _get_connection<true>(client_id);
             if (!connection)
             {
                 HL_NET_LOG_ERROR("Cannot send data to a non-existing connection: {} from server: {}", client_id, get_alias());
@@ -331,7 +347,7 @@ namespace net
             std::lock_guard<std::mutex> lock(m_mutex_api_control_flow);
             HL_NET_LOG_DEBUG("Sending {} bytes to client: {} from server: {}", size, endpoint_id, get_alias());
 
-            connection_t connection = _get_connection(endpoint_id);
+            connection_t connection = _get_connection<true>(endpoint_id);
             if (!connection)
             {
                 HL_NET_LOG_ERROR("Cannot send data to a non-existing connection: {} from server: {}", endpoint_id, get_alias());
@@ -344,12 +360,12 @@ namespace net
 
         bool disconnect(const client_id_t& client_id)
         {
-            return _unset_connection(client_id);
+            return _unset_connection<true>(client_id);
         }
 
         bool disconnect(const std::string &endpoint_id)
         {
-            return _unset_connection(endpoint_id);
+            return _unset_connection<true>(endpoint_id);
         }
 
     protected:
@@ -375,7 +391,7 @@ namespace net
         }
 
     public:
-        ~base_abstract_server_unwrapped()
+        virtual ~base_abstract_server_unwrapped() override
         {
             HL_NET_LOG_TRACE("Destroying base_abstract_server_unwrapped: {}", get_alias());
         }

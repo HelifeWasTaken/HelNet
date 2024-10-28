@@ -21,8 +21,7 @@ void client_routine(const std::string& host, const std::string& port)
 {
     Protocol client;
 
-    if (client.connect(host, port) == false)
-    {
+    if (client.connect(host, port) == false) {
         return;
     }
 
@@ -30,12 +29,10 @@ void client_routine(const std::string& host, const std::string& port)
     client.callbacks_register().set_on_receive(std::bind(client_handle_on_receive, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
     client.callbacks_register().set_on_receive_async(true);
 
-    while (client)
-    {
+    while (client.update()) {
         std::string line;
         std::getline(std::cin, line);
-        if (std::cin.bad())
-        {
+        if (std::cin.bad()) {
             std::cout << "Input closed - exiting" << std::endl;
             break;
         }
@@ -51,7 +48,16 @@ static void server_handle_on_receive(hl::net::server_t server,
 {
     try {
         std::string str(reinterpret_cast<char*>(buffer->data()), size);
-        if (str == "exit" || str == "exit\n" || str == "exit\r\n") { // Handle nc and telnet style
+        
+        // remove trailing \r\n or \n at end of line
+        if (str.size() > 0 && (str.back() == '\r' || str.back() == '\n')) {
+            str.pop_back();
+            if (str.size() > 0 && (str.back() == '\r' || str.back() == '\n')) {
+                str.pop_back();
+            }
+        }
+
+        if (str == "exit") {
             HL_NET_LOG_CRITICAL("Received: exit - closing server...");
             server->request_stop(); // Marks the server as unhealthy (will close on next iteration)
             return;
@@ -77,28 +83,12 @@ void server_routine(const std::string& port)
     server.callbacks_register().set_on_receive(std::bind(server_handle_on_receive, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
     server.callbacks_register().set_on_receive_async(true);
 
-    HL_NET_IF_CONSTEXPR (std::is_same<Protocol, hl::net::udp_server>::value) {
-        //TODO
- //       hl::net::plugins::server_clients_timeout timeout_plugin(2000); // 2000ms
-//        hl::net::plugins::server_clients_timeout::attach(server, timeout_plugin);
-        while (server) {
-            std::this_thread::sleep_for(std::chrono::seconds(1)); 
-            // timeout_plugin.on_update(server); // TODO: Should be called automatically by the server
-        }
-    } else {
-        while (server) {
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-        }
+    if (std::is_same<Protocol, hl::net::udp_server>::value) {
+        server.template attach_plugin<hl::net::plugins::server_clients_timeout>(2000); // 2000ms
     }
-    /*
-    // Should become
-    if constexpr(std::is_same<Protocol, hl::net::udp_server>::value) {
-        server.attach_plugin<hl::net::plugins::server_clients_timeout>(server, 2000); // 2000ms
+    while (server.update()) { 
+        // std::this_thread::sleep_for(std::chrono::seconds(1));
     }
-    while (server) { 
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-    }
-    */
     HL_NET_LOG_CRITICAL("Server closed");
 }
 
@@ -108,10 +98,8 @@ int main(int argc, char **argv)
 
     std::string port, mode = "connect", protocol = "tcp", host = "0.0.0.0";
 
-#if __GNUC__ || __clang__
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
-#endif
+HL_NET_DIAGNOSTIC_PUSH()
+HL_NET_DIAGNOSTIC_IMPLICIT_FALLTHROUGH_IGNORED()
     switch (argc)
     {
     case 5:
@@ -127,9 +115,7 @@ int main(int argc, char **argv)
         std::cout << argv[0] << ": <port> [*connect|listen] [*tcp|udp] [host = 0.0.0.0 (ignored for listen)]" << std::endl;
         return 1;
     }
-#if __GNUC__ || __clang__
-#pragma GCC diagnostic pop
-#endif
+HL_NET_DIAGNOSTIC_POP()
 
     if (protocol != "tcp" && protocol != "udp") {
         HL_NET_LOG_ERROR("Unsupported protocol: {} (only tcp/udp)", protocol);

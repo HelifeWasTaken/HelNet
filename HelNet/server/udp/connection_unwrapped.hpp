@@ -6,14 +6,15 @@ Copyright: (C) 2024 Mattis DALLEAU
 #pragma once
 
 #include <boost/asio/ip/udp.hpp>
-#include "../abstract_connection_unwrapped.hpp"
-#include "../utils.hpp"
+
+#include "HelNet/server/abstract_connection_unwrapped.hpp"
+#include "HelNet/server/utils.hpp"
 
 namespace hl
 {
 namespace net
 {
-    class udp_connection_unwrapped : public base_abstract_connection_unwrapped
+    class udp_connection_unwrapped final : public base_abstract_connection_unwrapped
     {
     public:
         using shared_t = std::shared_ptr<udp_connection_unwrapped>;
@@ -58,7 +59,7 @@ namespace net
             return m_endpoint;
         }
 
-        virtual ~udp_connection_unwrapped() override
+        virtual ~udp_connection_unwrapped() override final
         {
             HL_NET_LOG_TRACE("Destroying udp_connection_unwrapped: {}", get_alias());
             if (is_running())

@@ -5,52 +5,57 @@ Copyright: (C) 2024 Mattis DALLEAU
 
 #pragma once
 
-#include "./callbacks.hpp"
-#include "./plugins.hpp"
+#include "HelNet/server/callbacks.hpp"
+#include "HelNet/server/plugins.hpp"
 
 namespace hl
 {
 namespace net
 {
     template<class Protocol>
-    class server_wrapper : public hl::silva::collections::meta::NonCopyMoveable
+    class server_wrapper final : public hl::silva::collections::meta::NonCopyMoveable
     {
     private:
-        typename Protocol::shared_t m_shared_server;
+        server_t m_shared_server;
         Protocol &m_server;
+
+        plugins::plugin_manager<plugins::server_plugin> m_plugins;
 
     public:
         server_wrapper()
-            : m_shared_server(Protocol::make())
-            , m_server(*m_shared_server)
+            : m_shared_server(std::static_pointer_cast<base_abstract_server_unwrapped>(Protocol::make()))
+            , m_server(*std::dynamic_pointer_cast<Protocol>(this->m_shared_server))
+            , m_plugins()
         {
             HL_NET_LOG_DEBUG("Creating server wrapper for server: {}", m_server.get_alias());
 
             m_server.set_alias(fmt::format("{}({})", typeid(Protocol).name(), reinterpret_cast<void*>(&m_server)));
 
-            server_callback_register& callbacks = m_server.callbacks_register();
- 
-#if __GNUC__ || __clang__
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-#endif
-            callbacks.set_on_start_success(HL_NET_SERVER_ON_START(server) { HL_NET_LOG_INFO("Server started: {}", server->get_alias()); });
-            callbacks.set_on_stop_success(HL_NET_SERVER_ON_STOP() { HL_NET_LOG_INFO("Server stopped"); });
-            callbacks.set_on_stop_error(HL_NET_SERVER_ON_STOP_ERROR(ec) { HL_NET_LOG_ERROR("Server stop error: {}", ec.message()); });
-            callbacks.set_on_connection(HL_NET_SERVER_ON_CONNECTION(server, client) { HL_NET_LOG_INFO("Server accepted connection: {} - {}", server->get_alias(), client->get_alias()); });
-            callbacks.set_on_connection_error(HL_NET_SERVER_ON_CONNECTION_ERROR(server, ec) { HL_NET_LOG_ERROR("Server connection error: {} - {}", server->get_alias(), ec.message()); });
-            callbacks.set_on_disconnection(HL_NET_SERVER_ON_DISCONNECTION(server, client_id) { HL_NET_LOG_INFO("Server disconnected: {} - {}", server->get_alias(), client_id); });
-            callbacks.set_on_disconnection_error(HL_NET_SERVER_ON_DISCONNECTION_ERROR(server, ec) { HL_NET_LOG_ERROR("Server disconnection error: {} - {}", server->get_alias(), ec.message()); });
-            callbacks.set_on_sent(HL_NET_SERVER_ON_SENT(server, client, sent_bytes) { HL_NET_LOG_INFO("Server sent: {} - {} - {}", server->get_alias(), client->get_alias(), sent_bytes); });
-            callbacks.set_on_send_error(HL_NET_SERVER_ON_SEND_ERROR(server, client, ec, sent_bytes) { HL_NET_LOG_ERROR("Server send error: {} - {} - {} - {}", server->get_alias(), client->get_alias(), ec.message(), sent_bytes); });
-            callbacks.set_on_receive(HL_NET_SERVER_ON_RECEIVE(server, client, buffer_copy, recv_bytes) { HL_NET_LOG_INFO("Server received: {} - {} - {}", server->get_alias(), client->get_alias(), recv_bytes); });
-            callbacks.set_on_receive_error(HL_NET_SERVER_ON_RECEIVE_ERROR(server, client, buffer_copy, ec, recv_bytes) { HL_NET_LOG_ERROR("Server receive error: {} - {} - {} - {}", server->get_alias(), client->get_alias(), ec.message(), recv_bytes); });
+HL_NET_DIAGNOSTIC_PUSH()
+HL_NET_DIAGNOSTIC_UNUSED_PARAMETER_IGNORED()
+            server_callbacks server_callbacks;
+            server_callbacks.on_start_success_callback = HL_NET_SERVER_ON_START(server) { HL_NET_LOG_INFO("Server started: {}", server->get_alias()); };
+            server_callbacks.on_stop_success_callback = HL_NET_SERVER_ON_STOP() { HL_NET_LOG_INFO("Server stopped: {}"); };
+            server_callbacks.on_stop_error_callback = HL_NET_SERVER_ON_STOP_ERROR(ec) { HL_NET_LOG_ERROR("Server stop error: {}", ec.message()); };
+            server_callbacks.on_connection_callback = HL_NET_SERVER_ON_CONNECTION(server, client) { HL_NET_LOG_INFO("Server accepted connection: {} - {}", server->get_alias(), client->get_alias()); };
+            server_callbacks.on_connection_error_callback = HL_NET_SERVER_ON_CONNECTION_ERROR(server, ec) {
+                HL_NET_LOG_ERROR("Server connection error: {} - {}", server ? server->get_alias() : "nullserver", ec.message());
+            };
+            server_callbacks.on_disconnection_callback = HL_NET_SERVER_ON_DISCONNECTION(server, client_id) { HL_NET_LOG_INFO("Server disconnected: {} - {}", server->get_alias(), client_id); };
+            server_callbacks.on_disconnection_error_callback = HL_NET_SERVER_ON_DISCONNECTION_ERROR(server, ec) {
+                HL_NET_LOG_ERROR("Server disconnection error: {} - {}", server ? server->get_alias() : "nullserver", ec.message());
+            };
+            server_callbacks.on_sent_callback = HL_NET_SERVER_ON_SENT(server, client, sent_bytes) { HL_NET_LOG_INFO("Server sent: {} - {} - {}", server->get_alias(), client->get_alias(), sent_bytes); };
+            server_callbacks.on_send_error_callback = HL_NET_SERVER_ON_SEND_ERROR(server, client, ec, sent_bytes) {
+                HL_NET_LOG_ERROR("Server send error: {} - {} - {} - {}", server ? server->get_alias() : "nullserver", client ? client->get_alias() : "nullclient", ec.message(), sent_bytes);
+            };
+            server_callbacks.on_receive_callback = HL_NET_SERVER_ON_RECEIVE(server, client, buffer_copy, recv_bytes) { HL_NET_LOG_INFO("Server received: {} - {} - {}", server->get_alias(), client->get_alias(), recv_bytes); };
+            server_callbacks.on_receive_error_callback = HL_NET_SERVER_ON_RECEIVE_ERROR(server, client, buffer_copy, ec, recv_bytes) {
+                HL_NET_LOG_ERROR("Server receive error: {} - {} - {} - {}", server ? server->get_alias() : "nullserver", client ? client->get_alias() : "nullclient", ec.message(), recv_bytes);
+            };
+HL_NET_DIAGNOSTIC_POP()
 
-#if __GNUC__ || __clang__
-#pragma GCC diagnostic pop
-#endif
-
-
+            m_server.callbacks_register().add_layer(DEFAULT_REGISTER_LAYER, server_callbacks);
             HL_NET_LOG_DEBUG("Created server wrapper for server: {}", m_server.get_alias());
         }
 
@@ -125,9 +130,22 @@ namespace net
             return m_server.request_stop();
         }
 
-        operator bool()
+        template<class Plugin, class... Args>
+        void attach_plugin(Args&&... args)
         {
-            return m_server.healthy();
+            return m_plugins.attach<Plugin>(this->m_shared_server, std::forward<Args>(args)...);
+        }
+
+        template<class Plugin>
+        void detach_plugin()
+        {
+            m_plugins.detach<Plugin>(this->m_shared_server);
+        }
+
+        bool update()
+        {
+            this->m_plugins.update(this->m_shared_server);
+            return this->healthy();
         }
     };
 }

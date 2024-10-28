@@ -5,8 +5,8 @@ Copyright: (C) 2024 Mattis DALLEAU
 
 #pragma once
 
-#include "../plugins.hpp"
-#include "unwrapped.hpp"
+#include "HelNet/base_plugins.hpp"
+#include "HelNet/client/unwrapped.hpp"
 
 namespace hl
 {
@@ -16,7 +16,7 @@ namespace plugins
 {
     using client_plugin = base_plugin<client_t, client_callbacks>;
 
-    class client_timeout : public client_plugin
+    class client_timeout final : public client_plugin
     {
     public:
         using time_point_t = std::chrono::time_point<std::chrono::high_resolution_clock>;
@@ -37,12 +37,14 @@ namespace plugins
             , timeout(ms)
         {}
 
+        virtual ~client_timeout() override final = default;
+
         bool require_connection_on() const override final
         {
             return true;
         }
 
-        size_t on_update(client_t client) override final
+        void on_update(client_t &client) override final
         {
             const auto now = std::chrono::high_resolution_clock::now();
             const long int diff = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_receive).count();
@@ -53,9 +55,8 @@ namespace plugins
             }
             else
             {
-                HL_NET_LOG_DEBUG("client_timeout: Client {} will timeout in: {} ms", client->get_alias(), timeout - diff);
+                // HL_NET_LOG_DEBUG("client_timeout: Client {} will timeout in: {} ms", client->get_alias(), timeout - diff);
             }
-            return std::max(timeout - diff, 0L);
         }
 
         client_callbacks callbacks() override final

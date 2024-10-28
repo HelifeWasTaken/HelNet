@@ -5,9 +5,9 @@ Copyright: (C) 2024 Mattis DALLEAU
 
 #pragma once
 
-#include "../base.hpp"
-#include "../logger.hpp"
-#include "../defines.hpp"
+#include "HelNet/base.hpp"
+#include "HelNet/logger.hpp"
+#include "HelNet/defines.hpp"
 
 #include <hl/silva/collections/threads/basic_pool_async.hpp>
 #include <boost/system/error_code.hpp>
@@ -43,7 +43,7 @@ namespace net
     #define HL_NET_CLIENT_ON_SEND_ERROR(CLIENT, EC, SENT_BYTES) [](client_t CLIENT, const boost::system::error_code EC, const size_t SENT_BYTES)
     #define HL_NET_CLIENT_ON_SEND_ERROR_CAPTURE(CLIENT, EC, SENT_BYTES, ...) [__VA_ARGS__](client_t CLIENT, const boost::system::error_code EC, const size_t SENT_BYTES)
 
-    struct client_callbacks {
+    struct client_callbacks final {
         client_on_connect_callback          on_connect_callback = nullptr;
         bool                                on_connect_is_async = false;
 
@@ -66,7 +66,7 @@ namespace net
         bool                                on_send_error_is_async = false;
     };
 
-    class client_callback_register : public hl::silva::collections::meta::NonCopyMoveable
+    class client_callback_register final : public hl::silva::collections::meta::NonCopyMoveable
     {
     private:
         hl::silva::collections::threads::basic_pool_async m_pool;

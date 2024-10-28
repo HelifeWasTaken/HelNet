@@ -5,8 +5,8 @@ Copyright: (C) 2024 Mattis DALLEAU
 
 #pragma once
 
-#include "callbacks.hpp"
-#include "../utils.hpp"
+#include "HelNet/client/callbacks.hpp"
+#include "HelNet/utils.hpp"
 #include <boost/asio/io_service.hpp>
 
 namespace hl
@@ -14,8 +14,11 @@ namespace hl
 namespace net
 {
     // base client class
-    class base_abstract_client_unwrapped : public std::enable_shared_from_this<base_abstract_client_unwrapped>//, public hl::silva::collections::meta::NonCopyMoveable
+HL_NET_DIAGNOSTIC_PUSH()
+HL_NET_DIAGNOSTIC_NON_VIRTUAL_DESTRUCTOR_IGNORED()
+    class base_abstract_client_unwrapped : public std::enable_shared_from_this<base_abstract_client_unwrapped>, public hl::silva::collections::meta::NonCopyMoveable
     {
+HL_NET_DIAGNOSTIC_POP()
     public:
         using shared_t = client_t;
 
@@ -66,7 +69,7 @@ namespace net
             this->m_alias = alias;
         }
 
-        virtual ~base_abstract_client_unwrapped()
+        virtual ~base_abstract_client_unwrapped() override
         {
             HL_NET_LOG_TRACE("Destroying base_client_unwrapped: {}", this->get_alias());
             HL_NET_LOG_TRACE("Destroyed base_client_unwrapped: {}", this->get_alias());
@@ -129,7 +132,7 @@ namespace net
     };
 
     template<class Protocol>
-    class base_client_unwrapped : public base_abstract_client_unwrapped
+    class base_client_unwrapped final : public base_abstract_client_unwrapped
     {
     public:
         using shared_t = std::shared_ptr<base_client_unwrapped<Protocol>>;
@@ -278,7 +281,7 @@ namespace net
         }
 
         // Moved on the base class the de
-        virtual ~base_client_unwrapped() override
+        virtual ~base_client_unwrapped() override final
         {
             HL_NET_LOG_TRACE("Destroying base_client_unwrapped: {}", this->get_alias());
             if (this->connected())

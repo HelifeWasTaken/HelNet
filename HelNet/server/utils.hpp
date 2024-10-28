@@ -6,7 +6,7 @@ Copyright: (C) 2024 Mattis DALLEAU
 #pragma once
 
 #include <string>
-#include "../logger.hpp" // Includes the fmt::format function
+#include "HelNet/logger.hpp" // Includes the fmt::format function
 
 namespace hl
 {
@@ -37,6 +37,8 @@ namespace utils
             : forward()
             , backward()
         {}
+
+        ~back_and_forth_unordered_map() = default;
 
         back_and_forth_unordered_map(const back_and_forth_unordered_map &) = default;
         back_and_forth_unordered_map &operator=(const back_and_forth_unordered_map &) = default;

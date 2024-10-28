@@ -7,13 +7,13 @@ Copyright: (C) 2024 Mattis DALLEAU
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/io_service.hpp>
-#include "../abstract_connection_unwrapped.hpp"
+#include "HelNet/server/abstract_connection_unwrapped.hpp"
 
 namespace hl
 {
 namespace net
 {
-    class tcp_connection_unwrapped : public base_abstract_connection_unwrapped
+    class tcp_connection_unwrapped final : public base_abstract_connection_unwrapped
     {
     public:
         using shared_t = std::shared_ptr<tcp_connection_unwrapped>;
@@ -108,7 +108,7 @@ namespace net
             return shared_t(new tcp_connection_unwrapped(io_service, callback_register, notify_server_as_unhealthy, notify_client_as_unhealthy_to_the_server));
         }
 
-        virtual ~tcp_connection_unwrapped() override
+        virtual ~tcp_connection_unwrapped() override final
         {
             HL_NET_LOG_TRACE("Destroying connection_t: {}", get_alias());
             if (is_running())

@@ -5,8 +5,8 @@ Copyright: (C) 2024 Mattis DALLEAU
 
 #pragma once
 
-#include "unwrapped.hpp"
-#include "wrapper.hpp"
+#include "HelNet/client/unwrapped.hpp"
+#include "HelNet/client/wrapper.hpp"
 
 namespace hl
 {

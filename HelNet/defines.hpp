@@ -11,11 +11,13 @@ Copyright: (C) 2024 Mattis DALLEAU
     void add_layer(const std::string &layer, const CALLBACK_TYPE& callback=CALLBACK_TYPE()) \
     { \
         std::lock_guard<std::mutex> lock(CALLBACK_MUTEX); \
+        HL_NET_LOG_INFO("Adding layer: {}", layer); \
         CALLBACKS[layer] = callback; \
     } \
     void remove_layer(const std::string &layer) \
     { \
         std::lock_guard<std::mutex> lock(CALLBACK_MUTEX); \
+        HL_NET_LOG_INFO("Removing layer: {}", layer); \
         CALLBACKS.erase(layer); \
     } \
     std::vector<std::string> get_layers(void) const \
@@ -32,9 +34,8 @@ Copyright: (C) 2024 Mattis DALLEAU
     { \
         std::lock_guard<std::mutex> lock(CALLBACK_MUTEX); \
         CALLBACKS.clear(); \
+        HL_NET_LOG_INFO("Cleared all layers"); \
     }
-
-
 
 // TODO: Fix this macro for callback async (Is sync for now)
 #define _HL_INTERNAL_CALLBACK_REGISTER_IMPL_SETTERS(NAME, CALLBACK_TYPE, CALLBACKS, POOL, MUTEX) \
@@ -85,6 +86,7 @@ Copyright: (C) 2024 Mattis DALLEAU
     { \
         std::lock_guard<std::mutex> lock(MUTEX, std::adopt_lock); \
         auto sharable = GET_SHARABLE(); \
+        HL_NET_LOG_INFO("Calling sharable callback: {}", #NAME); \
         for (const auto& layer  : CALLBACKS) \
         { \
             const auto& callback_reg = layer.second; \
@@ -103,6 +105,7 @@ Copyright: (C) 2024 Mattis DALLEAU
                 } \
             } \
         } \
+        HL_NET_LOG_INFO("CallbackSharable: {} called", #NAME); \
     } \
     _HL_INTERNAL_CALLBACK_REGISTER_IMPL_SETTERS(NAME, CALLBACK_TYPE, CALLBACKS, POOL, MUTEX)
 
@@ -110,6 +113,7 @@ Copyright: (C) 2024 Mattis DALLEAU
     template<typename ...Args> void NAME(Args&&... args) \
     { \
         std::lock_guard<std::mutex> lock(MUTEX, std::adopt_lock); \
+        HL_NET_LOG_INFO("Calling non sharable callback: {}", #NAME); \
         for (const auto& layer  : CALLBACKS) \
         { \
             const auto& callback_reg = layer.second; \
@@ -128,6 +132,7 @@ Copyright: (C) 2024 Mattis DALLEAU
                 } \
             } \
         } \
+        HL_NET_LOG_INFO("NonSharableCallback: {} called", #NAME); \
     } \
     _HL_INTERNAL_CALLBACK_REGISTER_IMPL_SETTERS(NAME, CALLBACK_TYPE, CALLBACKS, POOL, MUTEX)
 

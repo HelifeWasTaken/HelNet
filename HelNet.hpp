@@ -15,7 +15,7 @@ Copyright: (C) 2024 Mattis DALLEAU
 // TODO: Modify hl::silva::collections so it compiles with c++14 or less (only compiles with c++17>= for now)
 // TODO: Should i change the buffer_t to a std::vector<byte> instead of a std::array<byte, HL_NET_BUFFER_SIZE> ?
 
-#include "./HelNet/client/tcp.hpp"
-#include "./HelNet/client/udp.hpp"
-#include "./HelNet/server/tcp.hpp"
-#include "./HelNet/server/udp.hpp"
+#include "HelNet/client/tcp.hpp"
+#include "HelNet/client/udp.hpp"
+#include "HelNet/server/tcp.hpp"
+#include "HelNet/server/udp.hpp"

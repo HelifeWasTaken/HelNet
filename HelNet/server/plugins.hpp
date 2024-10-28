@@ -5,8 +5,8 @@ Copyright: (C) 2024 Mattis DALLEAU
 
 #pragma once
 
-#include "../base_plugins.hpp"
-#include "abstract_server_unwrapped.hpp"
+#include "HelNet/base_plugins.hpp"
+#include "HelNet/server/abstract_server_unwrapped.hpp"
 
 namespace hl
 {
@@ -17,7 +17,7 @@ namespace plugins
     using server_plugin = base_plugin<server_t, server_callbacks>;
     using server_plugin_manager = plugin_manager<server_plugin>;
 
-    class server_clients_timeout : public server_plugin 
+    class server_clients_timeout final : public server_plugin 
     {
     public:
         using time_point_t = std::chrono::time_point<std::chrono::high_resolution_clock>;
@@ -64,16 +64,17 @@ namespace plugins
             , timeout(ms)
         {}
 
+        virtual ~server_clients_timeout() override final = default;
+
         bool require_connection_on() const override final
         {
             return true;
         }
 
-        size_t on_update(server_t &server) override final
+        void on_update(server_t &server) override final
         {
             std::lock_guard<std::mutex> lock(mutex);
             const auto now = std::chrono::high_resolution_clock::now();
-            long int smalldiff = 0;
             for (auto it = client_timeouts.begin(); it != client_timeouts.end();)
             {
                 const long int diff = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second).count();
@@ -87,10 +88,8 @@ namespace plugins
                 {
                     HL_NET_LOG_DEBUG("server_clients_timeout: Client {} will timeout in: {} ms", it->first, timeout - diff);
                     ++it;
-                    smalldiff = std::min(smalldiff, diff);
                 }
             }
-            return std::max(smalldiff, 0L);
         }
 
         server_callbacks callbacks() override final

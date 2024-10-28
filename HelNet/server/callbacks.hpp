@@ -5,9 +5,9 @@ Copyright: (C) 2024 Mattis DALLEAU
 
 #pragma once
 
-#include "../base.hpp"
-#include "../logger.hpp"
-#include "../defines.hpp"
+#include "HelNet/base.hpp"
+#include "HelNet/logger.hpp"
+#include "HelNet/defines.hpp"
 
 #include <hl/silva/collections/threads/basic_pool_async.hpp>
 #include <boost/system/error_code.hpp>
@@ -62,7 +62,7 @@ namespace net
     #define HL_NET_SERVER_ON_RECEIVE_ERROR(SERVER, CLIENT, BUFFER_COPY, EC, RECV_BYTES) [](server_t SERVER, connection_t CLIENT, shared_buffer_t BUFFER_COPY, const boost::system::error_code &EC, const size_t RECV_BYTES)
     #define HL_NET_SERVER_ON_RECEIVE_ERROR_CAPTURE(SERVER, CLIENT, BUFFER_COPY, EC, RECV_BYTES, ...) [__VA_ARGS__](server_t SERVER, connection_t CLIENT, shared_buffer_t BUFFER_COPY, const boost::system::error_code &EC, const size_t RECV_BYTES)
 
-    struct server_callbacks {
+    struct server_callbacks final {
         server_on_start_success_callback    on_start_success_callback = nullptr;
         bool                                on_start_success_is_async = false;
 
@@ -95,9 +95,12 @@ namespace net
 
         server_on_receive_error_callback    on_receive_error_callback = nullptr;
         bool                                on_receive_error_is_async = false;
+
+        server_callbacks() = default;
+        ~server_callbacks() = default;
     };
 
-    class server_callback_register : public hl::silva::collections::meta::NonCopyMoveable
+    class server_callback_register final : public hl::silva::collections::meta::NonCopyMoveable
     {
     private:
         hl::silva::collections::threads::basic_pool_async m_pool;

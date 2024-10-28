@@ -43,7 +43,7 @@ namespace logger = spdlog;
 #define HL_NET_LOG_LEVEL_CURRENT_ENUM   (hl::net::logger::level::level_enum::trace)
 
 #if defined(HL_NET_LOG_LEVEL)
-    #if (HL_NET_LOG_LEVEL < HL_NET_LOG_LEVEL_MIN) || (HL_NET_LOG_LEVEL > HL_NET_LOG_LEVEL_MAX)
+    #if ((HL_NET_LOG_LEVEL < HL_NET_LOG_LEVEL_MIN) || (HL_NET_LOG_LEVEL > HL_NET_LOG_LEVEL_MAX))
         #error "HL_NET_LOG_LEVEL must be between HL_NET_LOG_LEVEL_DEBUG and HL_NET_LOG_LEVEL_CRITICAL (Trace: 1, Debug: 2, Info: 3, Warn: 4, Error: 5, Critical: 6, None: 7)"
     #endif
 #elif defined(DEBUG)
@@ -98,7 +98,7 @@ namespace logger = spdlog;
 
     namespace __internal {
 
-        struct __hl_net_setup {
+        struct __hl_net_setup final {
             __hl_net_setup()
             {
                 hl::net::logger::set_level(HL_NET_LOG_LEVEL_CURRENT_ENUM);
