@@ -121,11 +121,7 @@ HL_NET_DIAGNOSTIC_POP()
         HL_NET_LOG_ERROR("Unsupported protocol: {} (only tcp/udp)", protocol);
         return 1;
     } else if (mode == "listen") {
-        if (protocol == "tcp") {
-            server_routine<hl::net::tcp_server>(port);
-        } else {
-            server_routine<hl::net::udp_server>(port);
-        }
+        protocol == "tcp" ? server_routine<hl::net::tcp_server>(port) : server_routine<hl::net::udp_server>(port);
     } else if (mode == "connect") {
         protocol == "tcp" ? client_routine<hl::net::tcp_client>(host, port) : client_routine<hl::net::udp_client>(host, port);
     } else {

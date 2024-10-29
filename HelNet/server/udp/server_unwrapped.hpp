@@ -53,13 +53,7 @@ namespace net
             }
             else
             {
-                // TODO
-                // possible that a race condition occurs here?
-                // E.g getting the connection of a duplicate endpoint (same ip and port)
-                // Should that even be possible? 
-                // Should lock all the way between _get_connection and _set_connection?
                 HL_NET_LOG_DEBUG("Received {} bytes from a client", bytes_transferred);
-
                 connection_t connection = _lock_connection_and_apply<connection_t>(
                     [this, buffer_cpy, bytes_transferred](void) -> connection_t 
                     {

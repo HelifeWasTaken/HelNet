@@ -37,7 +37,6 @@ Copyright: (C) 2024 Mattis DALLEAU
         HL_NET_LOG_INFO("Cleared all layers"); \
     }
 
-// TODO: Fix this macro for callback async (Is sync for now)
 #define _HL_INTERNAL_CALLBACK_REGISTER_IMPL_SETTERS(NAME, CALLBACK_TYPE, CALLBACKS, POOL, MUTEX) \
     void set_##NAME(const CALLBACK_TYPE##_##NAME##_callback& NAME##_callback, const std::string &layer = DEFAULT_REGISTER_LAYER) \
     { \
@@ -81,6 +80,7 @@ Copyright: (C) 2024 Mattis DALLEAU
         } \
     }
 
+// TODO: Fix this macro for callback async (Is sync for now)
 #define _HL_INTERNAL_CALLBACK_REGISTER_IMPL(NAME, CALLBACK_TYPE, CALLBACKS, POOL, MUTEX, GET_SHARABLE) \
     template<typename ...Args> void NAME(Args&&... args) \
     { \

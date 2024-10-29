@@ -51,7 +51,7 @@ namespace hl
     #define HL_NET_DIAGNOSTIC_UNUSED_LABEL_IGNORED
     #define HL_NET_DIAGNOSTIC_IMPLICIT_FALLTHROUGH_IGNORED
     #define HL_NET_DIAGNOSTIC_NON_VIRTUAL_DESTRUCTOR_IGNORED
-    #warning "Compiler not supported for diagnostic macros"
+    #warning "Compiler not supported for hlnet diagnostic macros"
 #endif
         }
     }
