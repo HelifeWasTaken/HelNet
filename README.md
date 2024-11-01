@@ -62,7 +62,11 @@ static void server_handle_on_receive(hl::net::base_abstract_server_unwrapped& se
 {
     try {
         std::string str(reinterpret_cast<char*>(buffer->data()), size);
-        if (str == "exit" || str == "exit\n" || str == "exit\r\n") { // Handle nc and telnet style
+        str.erase(std::find_if(str.rbegin(), str.rend(), [](unsigned char ch) {
+            return !std::isspace(ch);
+        }));
+
+        if (str == "exit") { // Handle nc and telnet style
             HL_NET_LOG_CRITICAL("Received: exit - closing server...");
             server.stop();
             return;
@@ -88,6 +92,9 @@ int main(int argc, char **argv)
     if (server.start(argv[1]) == false) {
         return 1;
     }
+
+    // When udp to disconnect automatically the clients
+    // server.template attach_plugin<hl::net::plugins::server_clients_timeout>(2000); // 2000ms
 
     server.callbacks().set_on_receive(std::bind(handle_on_receive, std::ref(server), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
     server.callbacks().set_on_receive_async(true);
