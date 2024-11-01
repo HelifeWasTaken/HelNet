@@ -93,7 +93,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    // When udp to disconnect automatically the clients
+    // When udp to disconnect automatically the clients because clients won't disconnect automatically
     // server.template attach_plugin<hl::net::plugins::server_clients_timeout>(2000); // 2000ms
 
     server.callbacks().set_on_receive(std::bind(handle_on_receive, std::ref(server), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
@@ -106,12 +106,3 @@ int main(int argc, char **argv)
 }
 ```
 
-Why should i use this instead of boost::asio directly?
-
-- It's somewhat easier to use
-- It's more modern C++ friendly
-- It has a logging system
-- It handles connection states for you in TCP
-- It recognizes clients in UDP
-- It has a callback system for most of the events
-- It will have a plugin system for callbacks (WIP*)
