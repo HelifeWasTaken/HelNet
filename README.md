@@ -26,9 +26,7 @@ int main(int argc, char **argv)
     hl::net::tcp_client client(argv[1], argv[2]);
     // hl::net::udp_client client(argv[1], argv[2]);
 
-    // While service is considered healthy
-    // Equivalent to: client.healthy()
-    while (client) { 
+    while (client.update()) { 
         client.send_string("Hello, World!");
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
@@ -99,7 +97,7 @@ int main(int argc, char **argv)
     server.callbacks().set_on_receive(std::bind(handle_on_receive, std::ref(server), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
     server.callbacks().set_on_receive_async(true);
 
-    while (server) {
+    while (server.update()) {
         // Sleep for a second to avoid 100% CPU usage (Will make the program wait for a second but it's fine for this example)
         std::this_thread::sleep_for(std::chrono::seconds(1)); 
     }
