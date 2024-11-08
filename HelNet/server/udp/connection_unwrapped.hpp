@@ -17,7 +17,7 @@ namespace net
     class udp_connection_unwrapped final : public base_abstract_connection_unwrapped
     {
     public:
-        using shared_t = std::shared_ptr<udp_connection_unwrapped>;
+        using shared_t = boost::shared_ptr<udp_connection_unwrapped>;
     
     private:
         boost::asio::ip::udp::socket &m_socket;

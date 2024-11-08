@@ -135,7 +135,7 @@ HL_NET_DIAGNOSTIC_POP()
     class base_client_unwrapped final : public base_abstract_client_unwrapped
     {
     public:
-        using shared_t = std::shared_ptr<base_client_unwrapped<Protocol>>;
+        using shared_t = boost::shared_ptr<base_client_unwrapped<Protocol>>;
         using this_type_t = base_client_unwrapped<Protocol>;
 
         struct connection_data 

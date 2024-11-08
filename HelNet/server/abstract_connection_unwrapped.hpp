@@ -20,7 +20,7 @@ HL_NET_DIAGNOSTIC_NON_VIRTUAL_DESTRUCTOR_IGNORED()
     {
 HL_NET_DIAGNOSTIC_POP()
     public:
-        using shared_t = std::shared_ptr<base_abstract_connection_unwrapped>;
+        using shared_t = boost::shared_ptr<base_abstract_connection_unwrapped>;
 
         virtual bool stop() = 0;
         virtual bool send(const shared_buffer_t &buffer, const size_t &size) = 0;

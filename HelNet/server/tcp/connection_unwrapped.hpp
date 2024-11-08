@@ -16,7 +16,7 @@ namespace net
     class tcp_connection_unwrapped final : public base_abstract_connection_unwrapped
     {
     public:
-        using shared_t = std::shared_ptr<tcp_connection_unwrapped>;
+        using shared_t = boost::shared_ptr<tcp_connection_unwrapped>;
 
     private:
         boost::asio::ip::tcp::socket m_socket;

@@ -57,7 +57,7 @@ static_assert(HL_NET_BUFFER_SIZE > 0, "HL_NET_BUFFER_SIZE must be greater than 0
     using port_t = u16;
 
     using buffer_t = std::array<byte, HL_NET_BUFFER_SIZE>;
-    using shared_buffer_t = std::shared_ptr<buffer_t>;
+    using shared_buffer_t = boost::shared_ptr<buffer_t>;
 
     using client_id_t = std::uint64_t;
     using atomic_client_id = std::atomic<client_id_t>;

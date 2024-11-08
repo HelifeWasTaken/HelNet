@@ -18,7 +18,7 @@ namespace net
 {
     class base_abstract_client_unwrapped;
 
-    using client_t                              = std::shared_ptr<base_abstract_client_unwrapped>;
+    using client_t                              = boost::shared_ptr<base_abstract_client_unwrapped>;
 
     using client_on_connect_callback            = std::function<void(client_t client)>;
     using client_on_disconnect_callback         = std::function<void(void)>;

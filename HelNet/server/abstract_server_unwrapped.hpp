@@ -26,7 +26,7 @@ HL_NET_DIAGNOSTIC_NON_VIRTUAL_DESTRUCTOR_IGNORED()
 HL_NET_DIAGNOSTIC_POP()
     public:
         using this_type_t = base_abstract_server_unwrapped;
-        using shared_t = std::shared_ptr<base_abstract_server_unwrapped>;
+        using shared_t = boost::shared_ptr<base_abstract_server_unwrapped>;
 
     private:
         server_callback_register m_callback_register;

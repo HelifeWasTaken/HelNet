@@ -19,8 +19,8 @@ namespace net
     class base_abstract_server_unwrapped;
     class base_abstract_connection_unwrapped;
 
-    using server_t                                  = std::shared_ptr<base_abstract_server_unwrapped>;
-    using connection_t                              = std::shared_ptr<base_abstract_connection_unwrapped>;
+    using server_t                                  = boost::shared_ptr<base_abstract_server_unwrapped>;
+    using connection_t                              = boost::shared_ptr<base_abstract_connection_unwrapped>;
 
     using server_on_start_success_callback          = std::function<void(server_t server)>;
 

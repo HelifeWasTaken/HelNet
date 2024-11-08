@@ -17,7 +17,7 @@ namespace net
     class tcp_server_unwrapped final : public base_abstract_server_unwrapped
     {
     public:
-        using shared_t = std::shared_ptr<tcp_server_unwrapped>;
+        using shared_t = boost::shared_ptr<tcp_server_unwrapped>;
         using tcp_connection_t = tcp_connection_unwrapped;
         using shared_tcp_connection_t = typename tcp_connection_t::shared_t;
 

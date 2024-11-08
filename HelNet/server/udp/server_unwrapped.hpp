@@ -19,7 +19,7 @@ namespace net
     class udp_server_unwrapped final : public base_abstract_server_unwrapped
     {
     public:
-        using shared_t = std::shared_ptr<udp_server_unwrapped>;
+        using shared_t = boost::shared_ptr<udp_server_unwrapped>;
         using udp_connection_t = udp_connection_unwrapped;
         using shared_udp_connection_t = typename udp_connection_t::shared_t;
 
