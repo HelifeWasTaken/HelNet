@@ -23,8 +23,8 @@ namespace net
 
     public:
         server_wrapper()
-            : m_shared_server(std::static_pointer_cast<base_abstract_server_unwrapped>(Protocol::make()))
-            , m_server(*std::dynamic_pointer_cast<Protocol>(this->m_shared_server))
+            : m_shared_server(boost::static_pointer_cast<base_abstract_server_unwrapped>(Protocol::make()))
+            , m_server(*boost::dynamic_pointer_cast<Protocol>(this->m_shared_server))
             , m_plugins()
         {
             HL_NET_LOG_DEBUG("Creating server wrapper for server: {}", m_server.get_alias());

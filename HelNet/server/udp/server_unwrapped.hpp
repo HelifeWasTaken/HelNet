@@ -66,7 +66,7 @@ namespace net
                         {
                             HL_NET_LOG_DEBUG("Connecting new client to server: {}", get_alias());
 
-                            fconnection = std::static_pointer_cast<base_abstract_connection_unwrapped>(udp_connection_t::make(
+                            fconnection = boost::static_pointer_cast<base_abstract_connection_unwrapped>(udp_connection_t::make(
                                 callbacks_register(),
                                 make_server_is_unhealthy_notifier(),
                                 make_client_is_unhealthy_notifier(),

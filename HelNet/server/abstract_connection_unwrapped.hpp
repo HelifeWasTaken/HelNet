@@ -16,7 +16,7 @@ namespace net
 
 HL_NET_DIAGNOSTIC_PUSH()
 HL_NET_DIAGNOSTIC_NON_VIRTUAL_DESTRUCTOR_IGNORED()
-    class base_abstract_connection_unwrapped : public std::enable_shared_from_this<base_abstract_connection_unwrapped>, public hl::silva::collections::meta::NonCopyMoveable
+    class base_abstract_connection_unwrapped : public boost::enable_shared_from_this<base_abstract_connection_unwrapped>, public hl::silva::collections::meta::NonCopyMoveable
     {
 HL_NET_DIAGNOSTIC_POP()
     public:

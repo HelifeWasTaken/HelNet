@@ -8,6 +8,8 @@ Copyright: (C) 2024 Mattis DALLEAU
 #include "HelNet/client/callbacks.hpp"
 #include "HelNet/utils.hpp"
 #include <boost/asio/io_service.hpp>
+#include <boost/enable_shared_from_this.hpp>
+#include <boost/shared_ptr.hpp>
 
 namespace hl
 {
@@ -16,7 +18,7 @@ namespace net
     // base client class
 HL_NET_DIAGNOSTIC_PUSH()
 HL_NET_DIAGNOSTIC_NON_VIRTUAL_DESTRUCTOR_IGNORED()
-    class base_abstract_client_unwrapped : public std::enable_shared_from_this<base_abstract_client_unwrapped>, public hl::silva::collections::meta::NonCopyMoveable
+    class base_abstract_client_unwrapped : public boost::enable_shared_from_this<base_abstract_client_unwrapped>, public hl::silva::collections::meta::NonCopyMoveable
     {
 HL_NET_DIAGNOSTIC_POP()
     public:

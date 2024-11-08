@@ -43,7 +43,7 @@ namespace net
             else
             {
                 HL_NET_LOG_DEBUG("Accepted connection for server: {}", get_alias());
-                base_abstract_connection_unwrapped::shared_t conn_callback = std::static_pointer_cast<base_abstract_connection_unwrapped>(connection);
+                base_abstract_connection_unwrapped::shared_t conn_callback = boost::static_pointer_cast<base_abstract_connection_unwrapped>(connection);
                 _set_connection<true>(conn_callback, utils::endpoint_to_string(connection->socket().remote_endpoint()));
                 connection->start_receive();
                 callbacks_register().on_connection(conn_callback);

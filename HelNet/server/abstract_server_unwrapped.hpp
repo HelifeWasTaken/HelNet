@@ -6,6 +6,8 @@ Copyright: (C) 2024 Mattis DALLEAU
 #pragma once
 
 #include <boost/asio/io_service.hpp>
+#include <boost/enable_shared_from_this.hpp>
+#include <boost/shared_ptr.hpp>
 
 #include "HelNet/server/callbacks.hpp"
 #include "HelNet/server/abstract_connection_unwrapped.hpp"
@@ -21,7 +23,7 @@ namespace net
 
 HL_NET_DIAGNOSTIC_PUSH()
 HL_NET_DIAGNOSTIC_NON_VIRTUAL_DESTRUCTOR_IGNORED()
-    class base_abstract_server_unwrapped : public std::enable_shared_from_this<base_abstract_server_unwrapped>, public hl::silva::collections::meta::NonCopyMoveable
+    class base_abstract_server_unwrapped : public boost::enable_shared_from_this<base_abstract_server_unwrapped>, public hl::silva::collections::meta::NonCopyMoveable
     {
 HL_NET_DIAGNOSTIC_POP()
     public:

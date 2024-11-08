@@ -7,6 +7,7 @@ Copyright: (C) 2024 Mattis DALLEAU
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/io_service.hpp>
+#include <boost/smart_ptr.hpp>
 #include "HelNet/server/abstract_connection_unwrapped.hpp"
 
 namespace hl
